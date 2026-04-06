@@ -150,6 +150,13 @@ internal class DisplayProvider(
         } catch (e: Exception) {
             Log.e(TAG, "setSurface($label) failed", e)
             logger("⚠️ setSurface($label) failed: ${e.javaClass.simpleName}: ${e.message}")
+            // Hide the SurfaceView to prevent surfaceflinger from compositing an
+            // uninitialised buffer, which can crash RenderEngine and reboot the device.
+            val view = if (forCursor) cursorView else mainView
+            view.visibility = android.view.View.INVISIBLE
+            if (!forCursor) {
+                cursorView.visibility = android.view.View.INVISIBLE
+            }
             false
         }
     }
