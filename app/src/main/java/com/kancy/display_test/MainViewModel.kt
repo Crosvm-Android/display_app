@@ -41,6 +41,11 @@ class MainViewModel : ViewModel() {
         private set
     var logMessages     by mutableStateOf(listOf<String>())
         private set
+    var selectedLogCategory by mutableStateOf<LogCategory?>(null)
+        private set
+
+    private val logManager = LogManager()
+
     var currentStep     by mutableStateOf(0)
         private set
     var hasRoot         by mutableStateOf(false)
@@ -73,7 +78,25 @@ class MainViewModel : ViewModel() {
 
     private val dateFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
-    fun clearLogs() { logMessages = emptyList() }
+    fun clearLogs() {
+        logManager.clearLogs()
+        updateLogDisplay()
+    }
+
+    fun setLogFilter(category: LogCategory?) {
+        selectedLogCategory = category
+        updateLogDisplay()
+    }
+
+    fun exportLogs(): String = logManager.exportToString()
+
+    private fun updateLogDisplay() {
+        logMessages = if (selectedLogCategory == null) {
+            logManager.getAllLogs().map { it.format() }
+        } else {
+            logManager.getLogsByCategory(selectedLogCategory!!).map { it.format() }
+        }
+    }
 
     fun toggleFullscreen() {
         isFullscreen = !isFullscreen
@@ -81,7 +104,9 @@ class MainViewModel : ViewModel() {
 
     private fun addLog(message: String) {
         val ts = dateFmt.format(Date())
-        logMessages = logMessages + "[$ts] $message"
+        val formattedMsg = "[$ts] $message"
+        logManager.addLog(message)
+        updateLogDisplay()
         Log.d(TAG, message)
     }
 
