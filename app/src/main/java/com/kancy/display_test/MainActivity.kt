@@ -378,6 +378,9 @@ fun CrosvmDisplayTestScreen(
                 OutlinedButton(onClick = { viewModel.listServices() }, modifier = Modifier.weight(1f)) {
                     Text("List", fontSize = 12.sp)
                 }
+                OutlinedButton(onClick = { viewModel.checkEnvironment() }, modifier = Modifier.weight(1f)) {
+                    Text("Check", fontSize = 12.sp)
+                }
                 if (viewModel.isConnected) {
                     OutlinedButton(onClick = { viewModel.saveFrame() }, modifier = Modifier.weight(1f)) {
                         Text("Save", fontSize = 12.sp)
@@ -437,6 +440,48 @@ fun CrosvmDisplayTestScreen(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+
+            // Environment check results
+            viewModel.environmentReport?.let { report ->
+                if (!report.allPassed()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Environment Issues",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            report.getFailures().forEach { (name, result) ->
+                                Column(modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Text(
+                                        "❌ $name: ${result.message}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp
+                                    )
+                                    result.suggestion?.let { suggestion ->
+                                        Text(
+                                            "   → $suggestion",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
 
             // Session info card (read-only display config)
             if (viewModel.isConnected && viewModel.surfaceSent) {

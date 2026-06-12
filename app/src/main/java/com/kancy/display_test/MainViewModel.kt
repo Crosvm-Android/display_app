@@ -66,6 +66,8 @@ class MainViewModel : ViewModel() {
         private set
     var serviceName by mutableStateOf("crosvm_display")
         private set
+    var environmentReport by mutableStateOf<EnvironmentChecker.EnvironmentReport?>(null)
+        private set
 
     // SurfaceView refs — set by Composable AndroidView factories
     var mainSurfaceView: SurfaceView? = null
@@ -303,6 +305,40 @@ class MainViewModel : ViewModel() {
                 services.forEach { addLog("   • $it") }
             } else {
                 addLog("⚠️ No relevant services found")
+            }
+        }
+    }
+
+    fun checkEnvironment() {
+        viewModelScope.launch {
+            addLog("🔍 Checking environment…")
+            val ctx = appContext ?: return@launch
+            val checker = EnvironmentChecker(ctx)
+            val report = withContext(Dispatchers.IO) {
+                checker.checkEnvironment(manager)
+            }
+            environmentReport = report
+
+            // Log results
+            if (report.rootAccess.passed) addLog("✅ ${report.rootAccess.message}")
+            else addLog("❌ ${report.rootAccess.message}")
+
+            if (report.hiddenApiPolicy.passed) addLog("✅ ${report.hiddenApiPolicy.message}")
+            else addLog("❌ ${report.hiddenApiPolicy.message}")
+
+            if (report.selinuxStatus.passed) addLog("✅ ${report.selinuxStatus.message}")
+            else addLog("❌ ${report.selinuxStatus.message}")
+
+            if (report.crosvmService.passed) addLog("✅ ${report.crosvmService.message}")
+            else addLog("❌ ${report.crosvmService.message}")
+
+            if (report.crosvmProcess.passed) addLog("✅ ${report.crosvmProcess.message}")
+            else addLog("⚠️ ${report.crosvmProcess.message}")
+
+            if (report.allPassed()) {
+                addLog("✅ Environment check passed")
+            } else {
+                addLog("⚠️ Environment check found issues")
             }
         }
     }
