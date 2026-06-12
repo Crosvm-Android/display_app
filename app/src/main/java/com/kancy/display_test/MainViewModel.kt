@@ -218,10 +218,11 @@ class MainViewModel : ViewModel() {
                     if (connected) {
                         connectionState = ConnectionState.DISPLAY_BINDER_GOT
                         statusText = "Display binder obtained"
-                        addLog("✅ Display binder obtained")
+                        addLog("   ✅ Display binder: obtained")
 
                         connectionState = ConnectionState.MAIN_SURFACE_SENDING
                         statusText = "Sending main surface…"
+                        addLog("   3. Main surface: sending...")
 
                         statusText = "Connected — VM display active"
                         addLog("✅ VM display active")
