@@ -48,6 +48,23 @@ class MainViewModel : ViewModel() {
 
     var currentStep     by mutableStateOf(0)
         private set
+
+    // Connection state machine steps
+    enum class ConnectionState {
+        DISCONNECTED,           // Not connected
+        ROOT_BINDING,           // Binding to root service
+        ROOT_BOUND,             // Root service bound
+        DISPLAY_BINDER_WAIT,    // Waiting for display binder
+        DISPLAY_BINDER_GOT,     // Display binder obtained
+        MAIN_SURFACE_SENDING,   // Sending main surface
+        MAIN_SURFACE_SENT,      // Main surface sent
+        CURSOR_SURFACE_SENDING, // Sending cursor surface
+        CURSOR_SURFACE_SENT,    // Cursor surface sent (fully connected)
+        ERROR                   // Connection error
+    }
+
+    var connectionState by mutableStateOf(ConnectionState.DISCONNECTED)
+        private set
     var hasRoot         by mutableStateOf(false)
         private set
     var isFullscreen    by mutableStateOf(false)
@@ -199,6 +216,13 @@ class MainViewModel : ViewModel() {
             onConnected = { connected ->
                 viewModelScope.launch {
                     if (connected) {
+                        connectionState = ConnectionState.DISPLAY_BINDER_GOT
+                        statusText = "Display binder obtained"
+                        addLog("✅ Display binder obtained")
+
+                        connectionState = ConnectionState.MAIN_SURFACE_SENDING
+                        statusText = "Sending main surface…"
+
                         statusText = "Connected — VM display active"
                         addLog("✅ VM display active")
                         // Create InputForwarder now that service is connected
@@ -224,6 +248,7 @@ class MainViewModel : ViewModel() {
                         inputForwarder = null
                         isConnected = false
                         surfaceSent = false
+                        connectionState = ConnectionState.ERROR
                         statusText = if (currentStep > 0) "Connection lost" else "Failed to connect"
                         errorMessage = "Display service disconnected"
                         addLog("❌ Display service disconnected — click Connect to retry")
@@ -265,6 +290,7 @@ class MainViewModel : ViewModel() {
             inputForwarder = null
             withContext(Dispatchers.IO) { manager.disconnect() }
             isConnected = false; currentStep = 0; surfaceSent = false
+            connectionState = ConnectionState.DISCONNECTED
             statusText = "Stopped"; errorMessage = null
             addLog("✅ Stopped")
         }
