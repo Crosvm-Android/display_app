@@ -41,6 +41,8 @@ internal class DisplayProvider(
     private val onConnected: (Boolean) -> Unit = {},
     /** Called when display config is received from crosvm. */
     private val onDisplayConfig: (android.crosvm.DisplayConfig) -> Unit = {},
+    /** Called when cursor stream state changes. */
+    private val onCursorStreamChanged: (Boolean) -> Unit = {},
     /** Called on a background thread; blocks until binder is available (or returns null). */
     private val binderProvider: () -> IBinder?,
 ) {
@@ -66,6 +68,7 @@ internal class DisplayProvider(
         mainHandler.post {
             logger("⚠️ Display service died — connection lost")
             onConnected(false)
+            onCursorStreamChanged(false)
             displayService = null
             mainSurfaceSent = false
             mainNeedsSend = false
@@ -210,11 +213,18 @@ internal class DisplayProvider(
             val pfds = ParcelFileDescriptor.createSocketPair()
             svc.setCursorStream(pfds[1])
             pfds[1].close()
-            cursorHandlerThread = CursorHandlerThread(pfds[0], cursorView, mainView).also { it.start() }
+            cursorHandlerThread = CursorHandlerThread(
+                pfds[0],
+                cursorView,
+                mainView,
+                onStreamClosed = { onCursorStreamChanged(false) }
+            ).also { it.start() }
             logger("✅ Cursor stream started")
+            onCursorStreamChanged(true)
         } catch (e: Exception) {
             Log.e(TAG, "setCursorStream failed", e)
             logger("⚠️ setCursorStream failed: ${e.message}")
+            onCursorStreamChanged(false)
         }
     }
 
@@ -318,6 +328,7 @@ private class CursorHandlerThread(
     private val stream: ParcelFileDescriptor,
     private val cursorView: SurfaceView,
     private val mainView: SurfaceView,
+    private val onStreamClosed: () -> Unit = {}
 ) : Thread("CursorHandler") {
 
     companion object { private const val TAG = "CursorHandler" }
@@ -340,7 +351,11 @@ private class CursorHandlerThread(
                 var offset = 0
                 while (offset < 8) {
                     val read = fis.read(buf.array(), offset, 8 - offset)
-                    if (read == -1) { Log.e(TAG, "Cursor stream EOF"); return }
+                    if (read == -1) {
+                        Log.e(TAG, "Cursor stream EOF")
+                        onStreamClosed()
+                        return
+                    }
                     offset += read
                 }
                 buf.rewind()

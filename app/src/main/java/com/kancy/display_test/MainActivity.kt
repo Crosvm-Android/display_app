@@ -400,6 +400,12 @@ fun CrosvmDisplayTestScreen(
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("Session Info", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
+
+                        // Service name
+                        Text("Service: ${viewModel.serviceName}",
+                            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+
+                        // Display config
                         Text("Resolution: ${viewModel.displayWidth} × ${viewModel.displayHeight}",
                             style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                         if (viewModel.displayDpi > 0) {
@@ -410,11 +416,32 @@ fun CrosvmDisplayTestScreen(
                             Text("Refresh Rate: ${viewModel.displayRefreshRate} Hz",
                                 style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                         }
+
+                        // Cursor stream status
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Text("Cursor Stream: ",
+                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            Box(
+                                modifier = Modifier.size(8.dp).clip(CircleShape)
+                                    .background(if (viewModel.cursorStreamActive) Color.Green else Color.Gray)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                if (viewModel.cursorStreamActive) "Active" else "Inactive",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp
+                            )
+                        }
+
                         Text("(Reported by crosvm)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                             fontSize = 10.sp,
-                            modifier = Modifier.padding(top = 2.dp))
+                            modifier = Modifier.padding(top = 4.dp))
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))

@@ -56,6 +56,10 @@ class MainViewModel : ViewModel() {
         private set
     var displayRefreshRate by mutableStateOf(0)
         private set
+    var cursorStreamActive by mutableStateOf(false)
+        private set
+    var serviceName by mutableStateOf("crosvm_display")
+        private set
 
     // SurfaceView refs — set by Composable AndroidView factories
     var mainSurfaceView: SurfaceView? = null
@@ -206,6 +210,13 @@ class MainViewModel : ViewModel() {
                     displayDpi = config.dpi
                     displayRefreshRate = config.refreshRate
                     addLog("📐 Display config updated: ${config.width}×${config.height}")
+                }
+            },
+            onCursorStreamChanged = { active ->
+                viewModelScope.launch {
+                    cursorStreamActive = active
+                    if (active) addLog("✅ Cursor stream active")
+                    else addLog("⚠️ Cursor stream closed")
                 }
             },
             binderProvider = { manager.waitForDisplayBinder() }
