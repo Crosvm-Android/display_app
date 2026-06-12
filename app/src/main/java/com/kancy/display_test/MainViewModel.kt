@@ -48,6 +48,7 @@ class MainViewModel : ViewModel() {
     var isFullscreen    by mutableStateOf(false)
         private set
     var isPointerCaptured by mutableStateOf(false)
+    var isInPipMode by mutableStateOf(false)
     var displayWidth    by mutableStateOf(1920)
         private set
     var displayHeight   by mutableStateOf(1080)
@@ -227,6 +228,9 @@ class MainViewModel : ViewModel() {
     fun stop() {
         viewModelScope.launch {
             addLog("🔌 Stopping…")
+            // Save frame before disconnecting
+            manager.saveFrame(forCursor = false)
+            addLog("📸 Saved display frame")
             keyboardMonitor?.stop()
             keyboardMonitor = null
             displayProvider?.shutdown()
@@ -236,6 +240,28 @@ class MainViewModel : ViewModel() {
             isConnected = false; currentStep = 0; surfaceSent = false
             statusText = "Stopped"; errorMessage = null
             addLog("✅ Stopped")
+        }
+    }
+
+    fun saveFrame() {
+        viewModelScope.launch {
+            val error = manager.saveFrame(forCursor = false)
+            if (error == null) {
+                addLog("📸 Frame saved")
+            } else {
+                addLog("⚠️ Save frame failed: $error")
+            }
+        }
+    }
+
+    fun drawSavedFrame() {
+        viewModelScope.launch {
+            val error = manager.drawSavedFrame(forCursor = false)
+            if (error == null) {
+                addLog("🖼️ Restored saved frame")
+            } else {
+                addLog("⚠️ Draw frame failed: $error")
+            }
         }
     }
 

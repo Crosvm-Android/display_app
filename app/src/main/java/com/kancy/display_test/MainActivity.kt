@@ -1,7 +1,12 @@
 package com.kancy.display_test
 
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.util.Rational
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.WindowManager
@@ -230,6 +235,35 @@ class MainActivity : ComponentActivity() {
             Log.d("MainActivity", "Pointer capture requested")
         }
     }
+
+    fun enterPictureInPicture() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+                val aspectRatio = Rational(viewModel.displayWidth, viewModel.displayHeight)
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+                    .build()
+                enterPictureInPictureMode(params)
+            }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Auto-enter PiP when user presses home button (if connected)
+        if (viewModel.isConnected && !viewModel.isFullscreen) {
+            enterPictureInPicture()
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        viewModel.isInPipMode = isInPictureInPictureMode
+        Log.d("MainActivity", "PiP mode: $isInPictureInPictureMode")
+    }
 }
 
 @Composable
@@ -333,8 +367,19 @@ fun CrosvmDisplayTestScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.weight(1f)
                 ) { Text("Stop") }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Secondary actions
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { viewModel.listServices() }, modifier = Modifier.weight(1f)) {
                     Text("List", fontSize = 12.sp)
+                }
+                if (viewModel.isConnected) {
+                    OutlinedButton(onClick = { viewModel.saveFrame() }, modifier = Modifier.weight(1f)) {
+                        Text("Save", fontSize = 12.sp)
+                    }
                 }
                 if (viewModel.inputForwarder != null) {
                     OutlinedButton(onClick = { showFunctionKeys = true }, modifier = Modifier.weight(1f)) {
@@ -471,6 +516,15 @@ fun CrosvmDisplayTestScreen(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // PiP button
+                    if (viewModel.inputForwarder != null && !viewModel.isInPipMode) {
+                        IconButton(
+                            onClick = { activity?.enterPictureInPicture() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Text("⬜", fontSize = 16.sp)
+                        }
+                    }
                     // Pointer lock toggle
                     if (viewModel.inputForwarder != null) {
                         IconButton(
