@@ -146,6 +146,7 @@ class MainActivity : ComponentActivity() {
                         viewModel = viewModel,
                         mainSurfaceView = mainSurfaceView,
                         cursorSurfaceView = cursorSurfaceView,
+                        onToggleFullscreen = { toggleFullscreen() },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -161,6 +162,37 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onResume()
+        // Restore immersive mode if we were in fullscreen
+        if (viewModel.isFullscreen) {
+            enterImmersiveMode()
+        }
+    }
+
+    private fun enterImmersiveMode() {
+        window.insetsController?.let { controller ->
+            controller.hide(
+                android.view.WindowInsets.Type.statusBars() or
+                android.view.WindowInsets.Type.navigationBars()
+            )
+            controller.systemBarsBehavior =
+                android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    private fun exitImmersiveMode() {
+        window.insetsController?.show(
+            android.view.WindowInsets.Type.statusBars() or
+            android.view.WindowInsets.Type.navigationBars()
+        )
+    }
+
+    fun toggleFullscreen() {
+        viewModel.toggleFullscreen()
+        if (viewModel.isFullscreen) {
+            enterImmersiveMode()
+        } else {
+            exitImmersiveMode()
+        }
     }
 }
 
@@ -169,6 +201,7 @@ fun CrosvmDisplayTestScreen(
     viewModel: MainViewModel,
     mainSurfaceView: SurfaceView,
     cursorSurfaceView: SurfaceView,
+    onToggleFullscreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showFunctionKeys by remember { mutableStateOf(false) }
@@ -186,7 +219,7 @@ fun CrosvmDisplayTestScreen(
                 modifier = Modifier.fillMaxSize()
             )
             IconButton(
-                onClick = { viewModel.toggleFullscreen() },
+                onClick = onToggleFullscreen,
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
             ) {
                 Icon(Icons.Filled.Close, contentDescription = "Exit Fullscreen", tint = Color.White)
@@ -346,7 +379,7 @@ fun CrosvmDisplayTestScreen(
                     style = MaterialTheme.typography.titleSmall
                 )
                 IconButton(
-                    onClick = { viewModel.toggleFullscreen() },
+                    onClick = onToggleFullscreen,
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(Icons.Filled.Fullscreen, contentDescription = "Fullscreen",

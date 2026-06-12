@@ -63,6 +63,7 @@ class MainViewModel : ViewModel() {
     private var displayProvider: DisplayProvider? = null
     var inputForwarder: InputForwarder? = null
         private set
+    private var keyboardMonitor: KeyboardMonitor? = null
 
     private val dateFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
@@ -172,13 +173,28 @@ class MainViewModel : ViewModel() {
                             val svc = android.crosvm.ICrosvmAndroidDisplayService.Stub.asInterface(binder)
                             inputForwarder = InputForwarder(svc) { msg -> addLog(msg) }
                             addLog("✅ InputForwarder ready")
+
+                            // Start keyboard monitor for tablet/desktop mode
+                            val ctx = appContext
+                            if (ctx != null) {
+                                keyboardMonitor = KeyboardMonitor(ctx) { isTablet ->
+                                    inputForwarder?.sendTabletModeEvent(isTablet)
+                                }
+                                keyboardMonitor?.start()
+                                addLog("✅ KeyboardMonitor started")
+                            }
                         }
                     } else {
+                        // Connection lost or failed
+                        keyboardMonitor?.stop()
+                        keyboardMonitor = null
+                        inputForwarder = null
                         isConnected = false
                         surfaceSent = false
-                        statusText = "Failed to connect"
-                        errorMessage = "Could not get crosvm display binder"
-                        addLog("❌ Could not connect to crosvm display service")
+                        statusText = if (currentStep > 0) "Connection lost" else "Failed to connect"
+                        errorMessage = "Display service disconnected"
+                        addLog("❌ Display service disconnected — click Connect to retry")
+                        currentStep = 0  // Allow reconnection
                     }
                 }
             },
@@ -199,6 +215,8 @@ class MainViewModel : ViewModel() {
     fun stop() {
         viewModelScope.launch {
             addLog("🔌 Stopping…")
+            keyboardMonitor?.stop()
+            keyboardMonitor = null
             displayProvider?.shutdown()
             displayProvider = null
             inputForwarder = null
@@ -254,6 +272,8 @@ class MainViewModel : ViewModel() {
 
     override fun onCleared() {
         super.onCleared()
+        keyboardMonitor?.stop()
+        keyboardMonitor = null
         displayProvider?.shutdown()
         displayProvider = null
         inputForwarder = null

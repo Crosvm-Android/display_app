@@ -62,6 +62,19 @@ internal class DisplayProvider(
 
     private var cursorHandlerThread: CursorHandlerThread? = null
 
+    private val deathRecipient = IBinder.DeathRecipient {
+        mainHandler.post {
+            logger("⚠️ Display service died — connection lost")
+            onConnected(false)
+            displayService = null
+            mainSurfaceSent = false
+            mainNeedsSend = false
+            cursorNeedsSend = false
+            cursorHandlerThread?.interrupt()
+            cursorHandlerThread = null
+        }
+    }
+
     init {
         mainView.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
         mainView.holder.addCallback(Callback(SurfaceKind.MAIN))
@@ -98,6 +111,14 @@ internal class DisplayProvider(
                 } else {
                     logger("🎉 Got crosvm display binder")
                     displayService = ICrosvmAndroidDisplayService.Stub.asInterface(b)
+
+                    // Register death recipient
+                    try {
+                        b.linkToDeath(deathRecipient, 0)
+                        logger("✅ Registered binder death listener")
+                    } catch (e: RemoteException) {
+                        logger("⚠️ Failed to register death listener")
+                    }
 
                     // Try to get display config from crosvm
                     try {
@@ -273,6 +294,13 @@ internal class DisplayProvider(
     }
 
     fun shutdown() {
+        // Unlink death recipient
+        try {
+            displayService?.asBinder()?.unlinkToDeath(deathRecipient, 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unlink death recipient", e)
+        }
+
         executor.shutdownNow()
         cursorHandlerThread?.interrupt()
         cursorHandlerThread = null
