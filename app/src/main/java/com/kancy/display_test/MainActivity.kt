@@ -1,6 +1,7 @@
 package com.kancy.display_test
 
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -220,8 +221,29 @@ class MainActivity : ComponentActivity() {
         viewModel.toggleFullscreen()
         if (viewModel.isFullscreen) {
             enterImmersiveMode()
+            // Suggest landscape orientation in fullscreen
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
             exitImmersiveMode()
+            // Restore unspecified orientation
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    override fun onBackPressed() {
+        when {
+            // Priority 1: Exit fullscreen if in fullscreen
+            viewModel.isFullscreen -> {
+                toggleFullscreen()
+            }
+            // Priority 2: Enter PiP if connected and not in fullscreen
+            viewModel.isConnected && !viewModel.isInPipMode -> {
+                enterPictureInPicture()
+            }
+            // Priority 3: Default back behavior
+            else -> {
+                super.onBackPressed()
+            }
         }
     }
 
@@ -242,8 +264,20 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
                 val aspectRatio = Rational(viewModel.displayWidth, viewModel.displayHeight)
+
+                // Get source rect hint from main surface view position
+                val location = IntArray(2)
+                mainSurfaceView.getLocationInWindow(location)
+                val sourceRect = android.graphics.Rect(
+                    location[0],
+                    location[1],
+                    location[0] + mainSurfaceView.width,
+                    location[1] + mainSurfaceView.height
+                )
+
                 val params = PictureInPictureParams.Builder()
                     .setAspectRatio(aspectRatio)
+                    .setSourceRectHint(sourceRect)
                     .build()
                 enterPictureInPictureMode(params)
             }
