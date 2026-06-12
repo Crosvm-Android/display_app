@@ -299,6 +299,18 @@ class CrosvmDisplayManager {
         catch (e: Exception) { "drawSavedFrame failed: ${e.message}" }
     }
 
+    // ── Display config ─────────────────────────────────────────────────────
+
+    fun getDisplayConfig(): android.crosvm.DisplayConfig? {
+        val svc = displayService ?: return null
+        return try {
+            svc.displayConfig
+        } catch (e: Exception) {
+            Log.e(TAG, "getDisplayConfig failed", e)
+            null
+        }
+    }
+
     // ── Cleanup ────────────────────────────────────────────────────────────
 
     fun disconnect() {

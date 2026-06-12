@@ -47,12 +47,22 @@ class MainViewModel : ViewModel() {
         private set
     var isFullscreen    by mutableStateOf(false)
         private set
+    var displayWidth    by mutableStateOf(1920)
+        private set
+    var displayHeight   by mutableStateOf(1080)
+        private set
+    var displayDpi      by mutableStateOf(0)
+        private set
+    var displayRefreshRate by mutableStateOf(0)
+        private set
 
     // SurfaceView refs — set by Composable AndroidView factories
     var mainSurfaceView: SurfaceView? = null
     var cursorSurfaceView: SurfaceView? = null
 
     private var displayProvider: DisplayProvider? = null
+    var inputForwarder: InputForwarder? = null
+        private set
 
     private val dateFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
@@ -144,19 +154,25 @@ class MainViewModel : ViewModel() {
 
     private fun createDisplayProvider(main: SurfaceView, cursor: SurfaceView) {
         displayProvider?.shutdown()
-        addLog("🔗 Creating DisplayProvider (1920×1080)…")
+        addLog("🔗 Creating DisplayProvider (${displayWidth}×${displayHeight})…")
         surfaceSent = true
         displayProvider = DisplayProvider(
             mainView = main,
             cursorView = cursor,
-            width = 1920,
-            height = 1080,
+            width = displayWidth,
+            height = displayHeight,
             logger = { msg -> viewModelScope.launch { addLog(msg) } },
             onConnected = { connected ->
                 viewModelScope.launch {
                     if (connected) {
                         statusText = "Connected — VM display active"
                         addLog("✅ VM display active")
+                        // Create InputForwarder now that service is connected
+                        manager.waitForDisplayBinder()?.let { binder ->
+                            val svc = android.crosvm.ICrosvmAndroidDisplayService.Stub.asInterface(binder)
+                            inputForwarder = InputForwarder(svc) { msg -> addLog(msg) }
+                            addLog("✅ InputForwarder ready")
+                        }
                     } else {
                         isConnected = false
                         surfaceSent = false
@@ -164,6 +180,15 @@ class MainViewModel : ViewModel() {
                         errorMessage = "Could not get crosvm display binder"
                         addLog("❌ Could not connect to crosvm display service")
                     }
+                }
+            },
+            onDisplayConfig = { config ->
+                viewModelScope.launch {
+                    displayWidth = config.width
+                    displayHeight = config.height
+                    displayDpi = config.dpi
+                    displayRefreshRate = config.refreshRate
+                    addLog("📐 Display config updated: ${config.width}×${config.height}")
                 }
             },
             binderProvider = { manager.waitForDisplayBinder() }
@@ -176,6 +201,7 @@ class MainViewModel : ViewModel() {
             addLog("🔌 Stopping…")
             displayProvider?.shutdown()
             displayProvider = null
+            inputForwarder = null
             withContext(Dispatchers.IO) { manager.disconnect() }
             isConnected = false; currentStep = 0; surfaceSent = false
             statusText = "Stopped"; errorMessage = null
@@ -230,6 +256,7 @@ class MainViewModel : ViewModel() {
         super.onCleared()
         displayProvider?.shutdown()
         displayProvider = null
+        inputForwarder = null
         mainSurfaceView = null
         cursorSurfaceView = null
         manager.disconnect()

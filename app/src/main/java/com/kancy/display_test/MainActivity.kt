@@ -45,6 +45,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,6 +89,36 @@ class MainActivity : ComponentActivity() {
                     Log.d("MainActivity", "🖥️ Main surface destroyed")
                 }
             })
+
+            // Input handling: touch, keyboard focus
+            sv.isFocusable = true
+            sv.isFocusableInTouchMode = true
+            sv.requestFocus()
+
+            // Touch listener
+            sv.setOnTouchListener { _, event ->
+                viewModel.inputForwarder?.let { forwarder ->
+                    val transform = TouchScaleCalculator.compute(
+                        viewModel.displayWidth,
+                        viewModel.displayHeight,
+                        sv.width,
+                        sv.height
+                    )
+                    forwarder.sendTouchEvent(event, transform.scaleX, transform.scaleY)
+                    true
+                } ?: false
+            }
+
+            // Keyboard listener
+            sv.setOnKeyListener { _, keyCode, event ->
+                viewModel.inputForwarder?.let { forwarder ->
+                    when (event.action) {
+                        android.view.KeyEvent.ACTION_DOWN -> forwarder.sendKeyEvent(keyCode, true)
+                        android.view.KeyEvent.ACTION_UP -> forwarder.sendKeyEvent(keyCode, false)
+                        else -> false
+                    }
+                } ?: false
+            }
         }
 
         cursorSurfaceView = SurfaceView(this).also { sv ->
@@ -137,6 +171,8 @@ fun CrosvmDisplayTestScreen(
     cursorSurfaceView: SurfaceView,
     modifier: Modifier = Modifier,
 ) {
+    var showFunctionKeys by remember { mutableStateOf(false) }
+
     if (viewModel.isFullscreen) {
         // ── Fullscreen — same SurfaceViews, just placed full-screen ─────────────
         Box(
@@ -154,6 +190,15 @@ fun CrosvmDisplayTestScreen(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
             ) {
                 Icon(Icons.Filled.Close, contentDescription = "Exit Fullscreen", tint = Color.White)
+            }
+            // Function keys button in fullscreen
+            if (viewModel.inputForwarder != null) {
+                OutlinedButton(
+                    onClick = { showFunctionKeys = true },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                ) {
+                    Text("Keys", fontSize = 12.sp, color = Color.White)
+                }
             }
         }
     } else {
@@ -206,6 +251,11 @@ fun CrosvmDisplayTestScreen(
                 OutlinedButton(onClick = { viewModel.listServices() }, modifier = Modifier.weight(1f)) {
                     Text("List", fontSize = 12.sp)
                 }
+                if (viewModel.inputForwarder != null) {
+                    OutlinedButton(onClick = { showFunctionKeys = true }, modifier = Modifier.weight(1f)) {
+                        Text("Keys", fontSize = 12.sp)
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -256,13 +306,45 @@ fun CrosvmDisplayTestScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Session info card (read-only display config)
+            if (viewModel.isConnected && viewModel.surfaceSent) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Session Info", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Resolution: ${viewModel.displayWidth} × ${viewModel.displayHeight}",
+                            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        if (viewModel.displayDpi > 0) {
+                            Text("DPI: ${viewModel.displayDpi}",
+                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        }
+                        if (viewModel.displayRefreshRate > 0) {
+                            Text("Refresh Rate: ${viewModel.displayRefreshRate} Hz",
+                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        }
+                        Text("(Reported by crosvm)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // VM Display header with fullscreen button
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("VM Display (1920×1080):", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "VM Display (${viewModel.displayWidth}×${viewModel.displayHeight}):",
+                    style = MaterialTheme.typography.titleSmall
+                )
                 IconButton(
                     onClick = { viewModel.toggleFullscreen() },
                     modifier = Modifier.size(32.dp)
@@ -276,7 +358,7 @@ fun CrosvmDisplayTestScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .aspectRatio(viewModel.displayWidth.toFloat() / viewModel.displayHeight.toFloat())
                     .background(Color.Black)
             ) {
                 CrosvmSurfaceViews(
@@ -322,6 +404,18 @@ fun CrosvmDisplayTestScreen(
                 }
             }
         }
+
+        // Function keys panel
+        FunctionKeysPanel(
+            visible = showFunctionKeys,
+            onDismiss = { showFunctionKeys = false },
+            onKeyDown = { scanCode ->
+                viewModel.inputForwarder?.sendRawKeyEvent(scanCode, true)
+            },
+            onKeyUp = { scanCode ->
+                viewModel.inputForwarder?.sendRawKeyEvent(scanCode, false)
+            }
+        )
     }
 }
 

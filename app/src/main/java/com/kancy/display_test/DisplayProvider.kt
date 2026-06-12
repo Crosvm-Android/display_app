@@ -33,12 +33,14 @@ import java.util.concurrent.Executors
 internal class DisplayProvider(
     private val mainView: SurfaceView,
     private val cursorView: SurfaceView,
-    private val width: Int,
-    private val height: Int,
+    private var width: Int,
+    private var height: Int,
     /** Called with log messages so the ViewModel can show them in the UI. */
     private val logger: (String) -> Unit = { Log.d(TAG, it) },
     /** Called when the display service is connected/disconnected. */
     private val onConnected: (Boolean) -> Unit = {},
+    /** Called when display config is received from crosvm. */
+    private val onDisplayConfig: (android.crosvm.DisplayConfig) -> Unit = {},
     /** Called on a background thread; blocks until binder is available (or returns null). */
     private val binderProvider: () -> IBinder?,
 ) {
@@ -67,6 +69,7 @@ internal class DisplayProvider(
         cursorView.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
         cursorView.holder.addCallback(Callback(SurfaceKind.CURSOR))
         cursorView.holder.setFormat(PixelFormat.RGBA_8888)
+        cursorView.holder.setFixedSize(64, 64)  // Cursor surface fixed at 64x64
         cursorView.setZOrderMediaOverlay(true)
 
         // Surfaces already live at construction time (DisplayProvider created after surfaceCreated
@@ -95,6 +98,24 @@ internal class DisplayProvider(
                 } else {
                     logger("🎉 Got crosvm display binder")
                     displayService = ICrosvmAndroidDisplayService.Stub.asInterface(b)
+
+                    // Try to get display config from crosvm
+                    try {
+                        val config = displayService?.displayConfig
+                        if (config != null && config.width > 0 && config.height > 0) {
+                            logger("📐 Display config from crosvm: ${config.width}×${config.height} @${config.dpi}dpi ${config.refreshRate}Hz")
+                            width = config.width
+                            height = config.height
+                            mainView.holder.setFixedSize(width, height)
+                            onDisplayConfig(config)
+                        } else {
+                            logger("⚠️ Display config unavailable, using default ${width}×${height}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to get display config, using default", e)
+                        logger("⚠️ Could not query display config, using ${width}×${height}")
+                    }
+
                     onConnected(true)
                     // Send any surfaces that are already live
                     applyPendingSurfaces()
