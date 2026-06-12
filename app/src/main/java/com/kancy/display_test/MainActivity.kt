@@ -250,6 +250,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    fun showSoftKeyboard() {
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        mainSurfaceView.requestFocus()
+        imm.showSoftInput(mainSurfaceView, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+        Log.d("MainActivity", "Soft keyboard requested")
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         // Auto-enter PiP when user presses home button (if connected)
@@ -570,6 +577,15 @@ fun CrosvmDisplayTestScreen(
                             modifier = Modifier.size(32.dp)
                         ) {
                             Text("⬜", fontSize = 16.sp)
+                        }
+                    }
+                    // Soft keyboard button
+                    if (viewModel.inputForwarder != null) {
+                        IconButton(
+                            onClick = { activity?.showSoftKeyboard() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Text("⌨️", fontSize = 16.sp)
                         }
                     }
                     // Pointer lock toggle
