@@ -109,6 +109,29 @@ class MainActivity : ComponentActivity() {
                 } ?: false
             }
 
+            // Mouse listener (absolute mode when pointer not captured)
+            sv.setOnGenericMotionListener { _, event ->
+                if (event.source and android.view.InputDevice.SOURCE_MOUSE != 0) {
+                    viewModel.inputForwarder?.let { forwarder ->
+                        if (!viewModel.isPointerCaptured) {
+                            // Absolute mouse mode
+                            forwarder.sendMouseEvent(event, false)
+                            true
+                        } else {
+                            false
+                        }
+                    } ?: false
+                } else {
+                    false
+                }
+            }
+
+            // Captured pointer listener (relative mouse mode)
+            sv.setOnCapturedPointerListener { _, event ->
+                viewModel.inputForwarder?.sendMouseEvent(event, true)
+                true
+            }
+
             // Keyboard listener
             sv.setOnKeyListener { _, keyCode, event ->
                 viewModel.inputForwarder?.let { forwarder ->
@@ -194,6 +217,19 @@ class MainActivity : ComponentActivity() {
             exitImmersiveMode()
         }
     }
+
+    fun togglePointerCapture() {
+        val sv = mainSurfaceView
+        if (viewModel.isPointerCaptured) {
+            sv.releasePointerCapture()
+            viewModel.isPointerCaptured = false
+            Log.d("MainActivity", "Pointer capture released")
+        } else {
+            sv.requestPointerCapture()
+            viewModel.isPointerCaptured = true
+            Log.d("MainActivity", "Pointer capture requested")
+        }
+    }
 }
 
 @Composable
@@ -205,6 +241,7 @@ fun CrosvmDisplayTestScreen(
     modifier: Modifier = Modifier,
 ) {
     var showFunctionKeys by remember { mutableStateOf(false) }
+    val activity = androidx.compose.ui.platform.LocalContext.current as? MainActivity
 
     if (viewModel.isFullscreen) {
         // ── Fullscreen — same SurfaceViews, just placed full-screen ─────────────
@@ -226,11 +263,26 @@ fun CrosvmDisplayTestScreen(
             }
             // Function keys button in fullscreen
             if (viewModel.inputForwarder != null) {
-                OutlinedButton(
-                    onClick = { showFunctionKeys = true },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                Row(
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Keys", fontSize = 12.sp, color = Color.White)
+                    // Pointer lock button
+                    OutlinedButton(
+                        onClick = { activity?.togglePointerCapture() }
+                    ) {
+                        Text(
+                            if (viewModel.isPointerCaptured) "🔒 Unlock" else "🖱️ Lock",
+                            fontSize = 12.sp,
+                            color = Color.White
+                        )
+                    }
+                    // Function keys button
+                    OutlinedButton(
+                        onClick = { showFunctionKeys = true }
+                    ) {
+                        Text("Keys", fontSize = 12.sp, color = Color.White)
+                    }
                 }
             }
         }
@@ -374,16 +426,43 @@ fun CrosvmDisplayTestScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "VM Display (${viewModel.displayWidth}×${viewModel.displayHeight}):",
-                    style = MaterialTheme.typography.titleSmall
-                )
-                IconButton(
-                    onClick = onToggleFullscreen,
-                    modifier = Modifier.size(32.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Filled.Fullscreen, contentDescription = "Fullscreen",
-                        tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "VM Display (${viewModel.displayWidth}×${viewModel.displayHeight}):",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    // Pointer lock indicator
+                    if (viewModel.isPointerCaptured) {
+                        Text(
+                            "🔒",
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // Pointer lock toggle
+                    if (viewModel.inputForwarder != null) {
+                        IconButton(
+                            onClick = { activity?.togglePointerCapture() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Text(
+                                if (viewModel.isPointerCaptured) "🔒" else "🖱️",
+                                fontSize = 16.sp
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onToggleFullscreen,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Filled.Fullscreen, contentDescription = "Fullscreen",
+                            tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
             }
 

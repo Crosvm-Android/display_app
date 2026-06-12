@@ -47,6 +47,7 @@ class MainViewModel : ViewModel() {
         private set
     var isFullscreen    by mutableStateOf(false)
         private set
+    var isPointerCaptured by mutableStateOf(false)
     var displayWidth    by mutableStateOf(1920)
         private set
     var displayHeight   by mutableStateOf(1080)
