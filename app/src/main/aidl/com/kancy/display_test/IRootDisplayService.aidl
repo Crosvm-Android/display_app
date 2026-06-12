@@ -2,15 +2,14 @@ package com.kancy.display_test;
 
 /**
  * AIDL interface for the RootService that obtains the display binder
- * from virtualizationservice (as root, bypassing permission checks).
+ * from the service manager (as root, using hidden ServiceManager APIs).
  */
 interface IRootDisplayService {
     /**
-     * Calls ServiceManager.waitForService("android.system.virtualizationservice"),
-     * then IVirtualizationServiceInternal.waitDisplayService().
-     * Runs as root (uid=0) so permission checks pass.
-     * Blocks until crosvm deposits its display service binder.
-     * Returns the ICrosvmAndroidDisplayService binder.
+     * Calls ServiceManager.waitForService("crosvm_display") — the service that standalone
+     * crosvm registers directly via --android-display-service crosvm_display.
+     * Runs as root (uid=0).
+     * Returns the ICrosvmAndroidDisplayService binder, or null if not found.
      */
     IBinder waitForDisplayBinder();
 }

@@ -25,7 +25,7 @@
             </intent-filter>
         </activity>
 
-        <!-- RootService: runs as uid=0 to call virtualizationservice -->
+        <!-- RootService: runs as uid=0 to look up the crosvm_display service -->
         <service
             android:name=".RootDisplayService"
             android:exported="false" />

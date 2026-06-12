@@ -19,17 +19,15 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Connects to the system virtualizationservice via a root service,
- * waits for crosvm to deposit its ICrosvmAndroidDisplayService binder,
+ * Looks up crosvm's ICrosvmAndroidDisplayService binder via a root service,
  * then uses it to pass surfaces for VM display.
  *
  * Architecture:
  *   1. App binds to RootDisplayService (runs as uid=0 via libsu RootService)
- *   2. Root service calls ServiceManager.waitForService("android.system.virtualizationservice")
- *   3. Root service calls IVirtualizationServiceInternal.waitDisplayService()
- *      (permission checks pass because uid=0)
- *   4. Root service returns ICrosvmAndroidDisplayService binder to the app
- *   5. App uses ICrosvmAndroidDisplayService.setSurface() directly
+ *   2. Root service calls ServiceManager.waitForService("crosvm_display"), the service that
+ *      standalone crosvm registers directly (via --android-display-service crosvm_display)
+ *   3. Root service returns ICrosvmAndroidDisplayService binder to the app
+ *   4. App uses ICrosvmAndroidDisplayService.setSurface() directly
  */
 class CrosvmDisplayManager {
 
@@ -90,7 +88,7 @@ class CrosvmDisplayManager {
 
     fun isServiceAvailable(): Boolean {
         return try {
-            val result = Shell.cmd("service check android.system.virtualizationservice").exec()
+            val result = Shell.cmd("service check crosvm_display").exec()
             result.out.any { it.contains("found") }
         } catch (_: Exception) { false }
     }
@@ -187,9 +185,9 @@ class CrosvmDisplayManager {
     }
 
     /**
-     * Binds to RootDisplayService (root process), which calls
-     * waitDisplayService() on the real virtualizationservice as uid=0.
-     * Blocks until crosvm connects its display service.
+     * Binds to RootDisplayService (root process), which looks up the "crosvm_display"
+     * service registered directly by standalone crosvm.
+     * Blocks until crosvm's display service is available.
      *
      * MUST be called from a background thread (e.g. Dispatchers.IO).
      */
@@ -317,10 +315,10 @@ class CrosvmDisplayManager {
         val sb = StringBuilder()
         sb.append("=== CONNECTION DIAGNOSTICS ===\n")
 
-        // Check if virtualizationservice is running
-        sb.append("1. VirtualizationService status:\n")
-        val virtServiceStatus = shellCheckService("android.system.virtualizationservice")
-        sb.append("   $virtServiceStatus\n")
+        // Check if crosvm's display service is registered
+        sb.append("1. crosvm_display service status:\n")
+        val displayServiceStatus = shellCheckService("crosvm_display")
+        sb.append("   $displayServiceStatus\n")
 
         // Check if crosvm is running
         sb.append("2. Crosvm process status:\n")

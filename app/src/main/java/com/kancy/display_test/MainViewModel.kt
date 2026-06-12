@@ -187,7 +187,7 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             addLog("📋 Scanning services…")
             val check = withContext(Dispatchers.IO) {
-                manager.shellCheckService("android.system.virtualizationservice")
+                manager.shellCheckService("crosvm_display")
             }
             addLog("service check: $check")
             val services = withContext(Dispatchers.IO) { manager.listRelevantServices() }
