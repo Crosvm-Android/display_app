@@ -95,6 +95,60 @@ class CrosvmDisplayManager {
 
     fun listRelevantServices(): List<String> = shellListServices()
 
+    /**
+     * Reads the GPU backend from the running crosvm process's command line — crosvm-zero-change.
+     *
+     * The backend is fixed at launch via `--gpu backend=<x>` and is NOT exposed over the display
+     * AIDL, so we parse the launch args of the crosvm process that registered [serviceName].
+     * crosvm starts AFTER this app, so this is only meaningful once a display connection exists.
+     *
+     * Resolves PIDs with `pidof crosvm` (targeted — no full /proc scan), then reads each
+     * /proc/<pid>/cmdline directly (NUL-separated) rather than `ps`, which truncates the long
+     * crosvm command line and would drop `--gpu`. crosvm forks device/child processes; those that
+     * are also named "crosvm" inherit the parent's argv (same cmdline → same answer), and any that
+     * don't carry the launch args are filtered out by the `--android-display-service` match. So we
+     * take the first matching line. Returns the backend name, "default" if `--gpu` is present
+     * without an explicit backend, or null if no matching process / no `--gpu`.
+     */
+    fun readGpuBackend(serviceName: String = "crosvm_display"): String? {
+        return try {
+            // For each crosvm PID, print its full cmdline (args space-joined) only if it carries
+            // the display-service launch flag — i.e. the VMM process, not an unrelated child.
+            val cmd = "for p in \$(pidof crosvm 2>/dev/null); do " +
+                "c=\$(tr '\\0' ' ' < /proc/\$p/cmdline 2>/dev/null); " +
+                "case \"\$c\" in *--android-display-service*) echo \"\$c\";; esac; " +
+                "done"
+            val result = Shell.cmd(cmd).exec()
+            val line = result.out.firstOrNull { it.contains(serviceName) }
+                ?: result.out.firstOrNull()
+                ?: return null
+            parseGpuBackend(line)
+        } catch (e: Exception) {
+            Log.e(TAG, "readGpuBackend failed", e)
+            null
+        }
+    }
+
+    /** Extracts `backend=` from a crosvm command line's `--gpu` argument. See [readGpuBackend]. */
+    private fun parseGpuBackend(cmdline: String): String? {
+        val tokens = cmdline.trim().split(Regex("\\s+"))
+        var i = 0
+        while (i < tokens.size) {
+            val t = tokens[i]
+            if (t == "--gpu" || t.startsWith("--gpu=")) {
+                val params = if (t.startsWith("--gpu=")) t.removePrefix("--gpu=")
+                    else tokens.getOrNull(i + 1)?.takeUnless { it.startsWith("--") }
+                val backend = params?.split(",")
+                    ?.map { it.trim() }
+                    ?.firstOrNull { it.startsWith("backend=") }
+                    ?.removePrefix("backend=")
+                return backend ?: "default"
+            }
+            i++
+        }
+        return null
+    }
+
     // ── Connect via RootService ──────────────────────────────────────────
 
     var lastError: String? = null

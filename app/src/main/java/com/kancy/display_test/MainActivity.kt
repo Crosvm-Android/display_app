@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,7 +40,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        applyKeepScreenOn(viewModel.keepScreenOn)
         enableEdgeToEdge()
 
         // Create SurfaceViews exactly once
@@ -178,11 +179,26 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /** Honors the "keep screen on" setting; called at startup and whenever the toggle changes. */
+    fun applyKeepScreenOn(on: Boolean) {
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
     fun toggleFullscreen() {
         viewModel.toggleFullscreen()
         if (viewModel.isFullscreen) {
             enterImmersiveMode()
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            // "Lock pointer on open": auto-capture once the immersive view has focus.
+            if (viewModel.lockPointerOnOpen && viewModel.inputForwarder != null && !viewModel.isPointerCaptured) {
+                mainSurfaceView.post {
+                    mainSurfaceView.requestFocus()
+                    mainSurfaceView.requestPointerCapture()
+                    viewModel.isPointerCaptured = true
+                    Log.d("MainActivity", "Pointer captured on open (lockPointerOnOpen)")
+                }
+            }
         } else {
             exitImmersiveMode()
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -270,6 +286,11 @@ fun AppRoot(
     cursorSurfaceView: SurfaceView,
     activity: MainActivity,
 ) {
+    // Keep the window flag in sync with the persisted setting whenever it changes.
+    LaunchedEffect(viewModel.keepScreenOn) {
+        activity.applyKeepScreenOn(viewModel.keepScreenOn)
+    }
+
     if (viewModel.isFullscreen) {
         ImmersiveDisplay(
             viewModel = viewModel,

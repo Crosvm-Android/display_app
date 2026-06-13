@@ -166,7 +166,7 @@ fun CompanionHomeScreen(
                         append(if (viewModel.displayRefreshRate > 0) "${viewModel.displayRefreshRate} Hz" else "—")
                     },
                 )
-                InfoRow("GPU backend", "—")
+                InfoRow("GPU backend（来自启动参数）", viewModel.gpuBackend ?: "—")
                 InfoRow(
                     "Cursor stream",
                     if (viewModel.cursorStreamActive) "active" else "inactive",

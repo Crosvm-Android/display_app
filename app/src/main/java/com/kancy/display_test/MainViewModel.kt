@@ -1,5 +1,6 @@
 package com.kancy.display_test
 
+import android.app.Application
 import android.content.Context
 import android.util.Log
 import android.view.SurfaceView
@@ -7,19 +8,38 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.properties.ReadWriteProperty
+import kotlin.reflect.KProperty
 
-class MainViewModel : ViewModel() {
+class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val TAG = "MainViewModel"
     }
 
     val manager = CrosvmDisplayManager()
+
+    private val settings = SettingsStore(app)
+
+    /**
+     * Compose-observable property that also persists to [SettingsStore] on every change. Reads
+     * the stored value (or [default]) at construction, so toggles survive app restarts.
+     */
+    private inner class PrefBool(private val key: String, default: Boolean) :
+        ReadWriteProperty<Any?, Boolean> {
+        private val state = mutableStateOf(settings.getBool(key, default))
+        override fun getValue(thisRef: Any?, property: KProperty<*>): Boolean = state.value
+        override fun setValue(thisRef: Any?, property: KProperty<*>, value: Boolean) {
+            if (state.value == value) return
+            state.value = value
+            settings.setBool(key, value)
+        }
+    }
 
     /** Must be set from Activity before calling start() */
     var appContext: Context? = null
@@ -84,18 +104,21 @@ class MainViewModel : ViewModel() {
         private set
     var cursorStreamActive by mutableStateOf(false)
         private set
+    /** GPU backend parsed from the running crosvm's launch args; null until known. Read-only. */
+    var gpuBackend by mutableStateOf<String?>(null)
+        private set
     var serviceName by mutableStateOf("crosvm_display")
         private set
     var environmentReport by mutableStateOf<EnvironmentChecker.EnvironmentReport?>(null)
         private set
 
-    // ── App-side UI preferences (session-scoped; not yet persisted) ─────────────
-    var autoConnect by mutableStateOf(true)
-    var lockPointerOnOpen by mutableStateOf(false)
-    var showFunctionKeysPref by mutableStateOf(true)
-    var tabletModeOnNoKeyboard by mutableStateOf(true)
-    var keepScreenOn by mutableStateOf(true)
-    var showLastFrameOnDisconnect by mutableStateOf(true)
+    // ── App-side UI preferences (persisted via SettingsStore, wired to behavior below) ──
+    var autoConnect by PrefBool("autoConnect", true)
+    var lockPointerOnOpen by PrefBool("lockPointerOnOpen", false)
+    var showFunctionKeysPref by PrefBool("showFunctionKeysPref", true)
+    var tabletModeOnNoKeyboard by PrefBool("tabletModeOnNoKeyboard", true)
+    var keepScreenOn by PrefBool("keepScreenOn", true)
+    var showLastFrameOnDisconnect by PrefBool("showLastFrameOnDisconnect", true)
 
     // SurfaceView refs — set by Composable AndroidView factories
     var mainSurfaceView: SurfaceView? = null
@@ -148,8 +171,13 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             addLog("🔑 Requesting root...")
             hasRoot = withContext(Dispatchers.IO) { manager.initRoot() }
-            if (hasRoot) addLog("✅ Root granted")
-            else { addLog("❌ Root denied"); errorMessage = "Root access required" }
+            if (hasRoot) {
+                addLog("✅ Root granted")
+                if (autoConnect && !isConnected && currentStep == 0) {
+                    addLog("⚡ Auto-connect enabled — starting…")
+                    start()
+                }
+            } else { addLog("❌ Root denied"); errorMessage = "Root access required" }
         }
     }
 
@@ -239,6 +267,13 @@ class MainViewModel : ViewModel() {
 
                         statusText = "Connected — VM display active"
                         addLog("✅ VM display active")
+
+                        // crosvm is now running; read its GPU backend from the launch args
+                        // (crosvm doesn't report it over the display AIDL, so this is read-only
+                        // and reflects what `--gpu backend=` was set to, not live state).
+                        val gpu = withContext(Dispatchers.IO) { manager.readGpuBackend(serviceName) }
+                        gpuBackend = gpu
+                        addLog(if (gpu != null) "🖼️ GPU backend: $gpu (from launch args)" else "ℹ️ GPU backend: unknown (no --gpu in args)")
                         // Create InputForwarder from the host-side input sockets the root
                         // service holds. crosvm connects to those sockets at ITS startup, so a
                         // channel may not be ready yet (getInputSockets() waits briefly). Events
@@ -256,14 +291,16 @@ class MainViewModel : ViewModel() {
                             )
                             addLog("✅ InputForwarder ready (channels: ${if (ready.isEmpty()) "none yet — relaunch crosvm with --input" else ready.joinToString()})")
 
-                            // Start keyboard monitor for tablet/desktop mode
+                            // Start keyboard monitor for tablet/desktop mode (only if enabled).
                             val ctx = appContext
-                            if (ctx != null) {
+                            if (ctx != null && tabletModeOnNoKeyboard) {
                                 keyboardMonitor = KeyboardMonitor(ctx) { isTablet ->
                                     inputForwarder?.sendTabletModeEvent(isTablet)
                                 }
                                 keyboardMonitor?.start()
                                 addLog("✅ KeyboardMonitor started")
+                            } else if (!tabletModeOnNoKeyboard) {
+                                addLog("ℹ️ Tablet-mode auto-switch disabled in settings")
                             }
                         } else {
                             addLog("⚠️ Input sockets unavailable — input forwarding disabled")
@@ -274,6 +311,7 @@ class MainViewModel : ViewModel() {
                         keyboardMonitor = null
                         inputForwarder?.close()
                         inputForwarder = null
+                        gpuBackend = null
                         isConnected = false
                         surfaceSent = false
                         connectionState = ConnectionState.ERROR
@@ -308,9 +346,11 @@ class MainViewModel : ViewModel() {
     fun stop() {
         viewModelScope.launch {
             addLog("🔌 Stopping…")
-            // Save frame before disconnecting
-            manager.saveFrame(forCursor = false)
-            addLog("📸 Saved display frame")
+            // Save the last frame before disconnecting, so it can be shown while offline.
+            if (showLastFrameOnDisconnect) {
+                manager.saveFrame(forCursor = false)
+                addLog("📸 Saved display frame")
+            }
             keyboardMonitor?.stop()
             keyboardMonitor = null
             displayProvider?.shutdown()
@@ -319,6 +359,7 @@ class MainViewModel : ViewModel() {
             inputForwarder = null
             withContext(Dispatchers.IO) { manager.disconnect() }
             isConnected = false; currentStep = 0; surfaceSent = false
+            gpuBackend = null
             connectionState = ConnectionState.DISCONNECTED
             statusText = "Stopped"; errorMessage = null
             addLog("✅ Stopped")

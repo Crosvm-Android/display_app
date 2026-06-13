@@ -125,8 +125,10 @@ fun ImmersiveDisplay(
             ) {
                 Icon(if (locked) Icons.Filled.Lock else Icons.Filled.LockOpen, contentDescription = "Pointer lock")
             }
-            SmallFloatingActionButton(onClick = { showKeys = true }) {
-                Icon(Icons.Filled.Apps, contentDescription = "Function keys")
+            if (viewModel.showFunctionKeysPref) {
+                SmallFloatingActionButton(onClick = { showKeys = true }) {
+                    Icon(Icons.Filled.Apps, contentDescription = "Function keys")
+                }
             }
             SmallFloatingActionButton(onClick = onShowKeyboard) {
                 Icon(Icons.Filled.Keyboard, contentDescription = "Soft keyboard")
