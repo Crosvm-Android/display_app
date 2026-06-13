@@ -101,49 +101,66 @@ internal class DisplayProvider(
             cursorNeedsSend = true
         }
 
-        // Fetch binder on background thread — never blocks main thread
+        // Fetch binder on background thread — never blocks main thread.
         executor.submit {
-            logger("⏳ Waiting for crosvm display binder (background)…")
-            val b = try { binderProvider() } catch (e: Exception) {
-                Log.e(TAG, "binderProvider threw", e); null
+            logger("⏳ Waiting for crosvm display binder — start crosvm now if you haven't…")
+            // Poll until crosvm registers its display service. binderProvider() (the root
+            // service) itself blocks ~5s per call, so this retries every few seconds. crosvm is
+            // expected to start AFTER this app, so we wait indefinitely rather than erroring out;
+            // the loop ends only when the executor is shut down (Stop / disconnect interrupts it).
+            var b: IBinder? = null
+            var attempt = 0
+            while (!Thread.currentThread().isInterrupted) {
+                b = try { binderProvider() } catch (e: Exception) {
+                    Log.e(TAG, "binderProvider threw", e); null
+                }
+                if (b != null) break
+                attempt++
+                logger("⏳ crosvm display service not up yet — still waiting (attempt $attempt)")
+                try {
+                    Thread.sleep(1000)
+                } catch (ie: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+            val binder = b
+            if (binder == null) {
+                Log.d(TAG, "Binder wait cancelled (provider shut down)")
+                return@submit
             }
             mainHandler.post {
-                if (b == null) {
-                    logger("❌ Display binder is null — crosvm not running?")
-                    onConnected(false)
-                } else {
-                    logger("🎉 Got crosvm display binder")
-                    displayService = ICrosvmAndroidDisplayService.Stub.asInterface(b)
+                logger("🎉 Got crosvm display binder")
+                displayService = ICrosvmAndroidDisplayService.Stub.asInterface(binder)
 
-                    // Register death recipient
-                    try {
-                        b.linkToDeath(deathRecipient, 0)
-                        logger("✅ Registered binder death listener")
-                    } catch (e: RemoteException) {
-                        logger("⚠️ Failed to register death listener")
-                    }
-
-                    // Try to get display config from crosvm
-                    try {
-                        val config = displayService?.displayConfig
-                        if (config != null && config.width > 0 && config.height > 0) {
-                            logger("📐 Display config from crosvm: ${config.width}×${config.height} @${config.dpi}dpi ${config.refreshRate}Hz")
-                            width = config.width
-                            height = config.height
-                            mainView.holder.setFixedSize(width, height)
-                            onDisplayConfig(config)
-                        } else {
-                            logger("⚠️ Display config unavailable, using default ${width}×${height}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to get display config, using default", e)
-                        logger("⚠️ Could not query display config, using ${width}×${height}")
-                    }
-
-                    onConnected(true)
-                    // Send any surfaces that are already live
-                    applyPendingSurfaces()
+                // Register death recipient
+                try {
+                    binder.linkToDeath(deathRecipient, 0)
+                    logger("✅ Registered binder death listener")
+                } catch (e: RemoteException) {
+                    logger("⚠️ Failed to register death listener")
                 }
+
+                // Try to get display config from crosvm
+                try {
+                    val config = displayService?.displayConfig
+                    if (config != null && config.width > 0 && config.height > 0) {
+                        logger("📐 Display config from crosvm: ${config.width}×${config.height} @${config.dpi}dpi ${config.refreshRate}Hz")
+                        width = config.width
+                        height = config.height
+                        mainView.holder.setFixedSize(width, height)
+                        onDisplayConfig(config)
+                    } else {
+                        logger("⚠️ Display config unavailable, using default ${width}×${height}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to get display config, using default", e)
+                    logger("⚠️ Could not query display config, using ${width}×${height}")
+                }
+
+                onConnected(true)
+                // Send any surfaces that are already live
+                applyPendingSurfaces()
             }
         }
     }
