@@ -13,24 +13,32 @@ package com.kancy.display_test;
  */
 interface IRootDisplayService {
     /**
-     * Calls ServiceManager.waitForService("crosvm_display") — the service that standalone
-     * crosvm registers directly via --android-display-service crosvm_display.
+     * Calls ServiceManager.waitForService(serviceName) — the service that standalone crosvm
+     * registers directly via --android-display-service <serviceName>. The name is the per-VM
+     * key, so multiple VMs each register (and are looked up) under their own name.
      * Runs as root (uid=0).
      * Returns the ICrosvmAndroidDisplayService binder, or null if not found.
      */
-    IBinder waitForDisplayBinder();
+    IBinder waitForDisplayBinder(String serviceName);
 
     /**
-     * Per-channel connection status, indexed by InputSocketHost channel constants
-     * [MULTITOUCH, KEYBOARD, MOUSE, SWITCHES]: true once crosvm has connected that socket.
-     * Informational (for the UI); writeInput consults the live socket regardless.
+     * Starts listening on [vmKey]'s input sockets (idempotent). Must be called before that VM's
+     * crosvm launches, since crosvm connects to the sockets at its startup. Each vmKey gets its
+     * own socket set, so concurrently-running VMs never collide on a shared path.
      */
-    boolean[] getInputChannelsReady();
+    void ensureInputListening(String vmKey);
+
+    /**
+     * Per-channel connection status for [vmKey], indexed by InputSocketHost channel constants
+     * [MULTITOUCH, KEYBOARD, MOUSE, SWITCHES]: true once that VM's crosvm has connected the
+     * socket. Informational (for the UI); writeInput consults the live socket regardless.
+     */
+    boolean[] getInputChannelsReady(String vmKey);
 
     /**
      * Writes pre-encoded evdev bytes (8-byte records: type:u16 LE, code:u16 LE, value:i32 LE)
-     * to the given input channel's socket, in the root process. Returns true if written, false
+     * to [vmKey]'s input channel socket, in the root process. Returns true if written, false
      * if that channel isn't connected yet or the write failed.
      */
-    boolean writeInput(int channel, in byte[] data);
+    boolean writeInput(String vmKey, int channel, in byte[] data);
 }

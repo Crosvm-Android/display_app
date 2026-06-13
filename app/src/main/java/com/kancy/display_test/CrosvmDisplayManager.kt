@@ -40,6 +40,12 @@ class CrosvmDisplayManager {
     private var rootServiceBinder: IRootDisplayService? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * The crosvm display service name = the per-VM key. Set by the caller before connecting; used
+     * for the display-binder lookup AND the input socket namespace, so multiple VMs stay isolated.
+     */
+    var serviceName: String = "crosvm_display"
+
     // ── Root ──────────────────────────────────────────────────────────────
 
     fun initRoot(): Boolean {
@@ -124,12 +130,36 @@ class CrosvmDisplayManager {
 
     fun isServiceAvailable(): Boolean {
         return try {
-            val result = Shell.cmd("service check crosvm_display").exec()
+            val result = Shell.cmd("service check $serviceName").exec()
             result.out.any { it.contains("found") }
         } catch (_: Exception) { false }
     }
 
     fun listRelevantServices(): List<String> = shellListServices()
+
+    /**
+     * Enumerates the crosvm display services currently registered with the service manager — one
+     * per running VM. Parses `service list` lines of the form `<idx>\t<name>: [<interface>]` and
+     * keeps those whose binder descriptor is [ICrosvmAndroidDisplayService] (so arbitrary VM names
+     * are found by interface, not by a name convention); falls back to a `crosvm`-prefix match for
+     * the rare case a descriptor isn't reported. Returns the service names = per-VM keys.
+     */
+    fun discoverDisplayServices(): List<String> {
+        return try {
+            val re = Regex("""^\s*\d+\s+(\S+):\s*\[(.*)]\s*$""")
+            Shell.cmd("service list").exec().out.mapNotNull { line ->
+                val m = re.find(line) ?: return@mapNotNull null
+                val name = m.groupValues[1]
+                val iface = m.groupValues[2]
+                if (iface.contains("ICrosvmAndroidDisplayService") ||
+                    name.startsWith("crosvm")
+                ) name else null
+            }.distinct()
+        } catch (e: Exception) {
+            Log.e(TAG, "discoverDisplayServices failed", e)
+            emptyList()
+        }
+    }
 
     /**
      * Reads the GPU backend from the running crosvm process's command line — crosvm-zero-change.
@@ -146,7 +176,7 @@ class CrosvmDisplayManager {
      * take the first matching line. Returns the backend name, "default" if `--gpu` is present
      * without an explicit backend, or null if no matching process / no `--gpu`.
      */
-    fun readGpuBackend(serviceName: String = "crosvm_display"): String? {
+    fun readGpuBackend(serviceName: String = this.serviceName): String? {
         return try {
             // For each crosvm PID, print its full cmdline (args space-joined) only if it carries
             // the display-service launch flag — i.e. the VMM process, not an unrelated child.
@@ -219,13 +249,26 @@ class CrosvmDisplayManager {
             return null
         }
         return try {
-            Log.i(TAG, "waitForDisplayBinder: calling root service (blocks until crosvm)…")
-            val b = svc.waitForDisplayBinder()
+            Log.i(TAG, "waitForDisplayBinder('$serviceName'): calling root service (blocks until crosvm)…")
+            val b = svc.waitForDisplayBinder(serviceName)
             Log.i(TAG, "waitForDisplayBinder: got binder=$b")
             b
         } catch (e: Exception) {
             Log.e(TAG, "waitForDisplayBinder failed", e)
             null
+        }
+    }
+
+    /**
+     * Asks the root process to start listening on this VM's input sockets (idempotent). Call
+     * before that VM's crosvm launches so the listeners exist when crosvm connects.
+     */
+    fun ensureInputListening() {
+        val svc = rootServiceBinder ?: return
+        try {
+            svc.ensureInputListening(serviceName)
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureInputListening failed", e)
         }
     }
 
@@ -236,7 +279,7 @@ class CrosvmDisplayManager {
             return null
         }
         return try {
-            svc.getInputChannelsReady()
+            svc.getInputChannelsReady(serviceName)
         } catch (e: Exception) {
             Log.e(TAG, "getInputChannelsReady failed", e)
             null
@@ -251,7 +294,7 @@ class CrosvmDisplayManager {
     fun writeInput(channel: Int, data: ByteArray): Boolean {
         val svc = rootServiceBinder ?: return false
         return try {
-            svc.writeInput(channel, data)
+            svc.writeInput(serviceName, channel, data)
         } catch (e: Exception) {
             Log.e(TAG, "writeInput(ch=$channel) failed", e)
             false
@@ -325,8 +368,8 @@ class CrosvmDisplayManager {
 
         // Step 2: Call waitForDisplayBinder() in the root process
         try {
-            Log.i(TAG, "Step 2: Calling waitForDisplayBinder() in root process (blocks until crosvm connects)...")
-            val displayBinder = svc.waitForDisplayBinder()
+            Log.i(TAG, "Step 2: Calling waitForDisplayBinder('$serviceName') in root process (blocks until crosvm connects)...")
+            val displayBinder = svc.waitForDisplayBinder(serviceName)
             if (displayBinder == null) {
                 lastError = "waitForDisplayBinder() returned null — crosvm not connected?"
                 Log.e(TAG, lastError!!)
@@ -447,8 +490,8 @@ class CrosvmDisplayManager {
         sb.append("=== CONNECTION DIAGNOSTICS ===\n")
 
         // Check if crosvm's display service is registered
-        sb.append("1. crosvm_display service status:\n")
-        val displayServiceStatus = shellCheckService("crosvm_display")
+        sb.append("1. $serviceName service status:\n")
+        val displayServiceStatus = shellCheckService(serviceName)
         sb.append("   $displayServiceStatus\n")
 
         // Check if crosvm is running

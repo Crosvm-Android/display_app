@@ -17,6 +17,12 @@ class SettingsStore(context: Context) {
         prefs.edit().putBoolean(key, value).apply()
     }
 
+    fun getString(key: String, default: String): String = prefs.getString(key, default) ?: default
+
+    fun setString(key: String, value: String) {
+        prefs.edit().putString(key, value).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "display_app_settings"
     }

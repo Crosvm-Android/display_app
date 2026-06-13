@@ -22,8 +22,6 @@ class RootDisplayService : RootServiceBase() {
     companion object {
         private const val TAG = "RootDisplayService"
 
-        private const val DIRECT_SERVICE_NAME = "crosvm_display"
-
         // ServiceManager access via reflection (hidden API)
         private val smClass: Class<*> by lazy { Class.forName("android.os.ServiceManager") }
 
@@ -66,53 +64,57 @@ class RootDisplayService : RootServiceBase() {
 
     override fun onCreate() {
         super.onCreate()
-        // Open the input listeners as early as possible: crosvm connects to them at ITS
-        // startup, so they must exist before crosvm launches. Binding this root service first
-        // (then launching crosvm with InputSocketHost.LAUNCH_ARGS) yields the right ordering.
-        inputSocketHost.ensureListening()
+        // Input listeners are now per-VM and opened on demand via ensureInputListening(vmKey):
+        // the root service can't know which VM names to listen for until the app asks. The app
+        // calls ensureInputListening before launching that VM's crosvm to preserve the ordering
+        // (listeners must exist before crosvm connects at its startup).
     }
 
     override fun onBind(intent: Intent): IBinder {
         Log.i(TAG, "onBind: root service starting, uid=${android.os.Process.myUid()}, pid=${android.os.Process.myPid()}")
         return object : IRootDisplayService.Stub() {
-            override fun waitForDisplayBinder(): IBinder? {
-                return doWaitForDisplayBinder()
+            override fun waitForDisplayBinder(serviceName: String): IBinder? {
+                return doWaitForDisplayBinder(serviceName)
             }
 
-            override fun getInputChannelsReady(): BooleanArray {
-                return inputSocketHost.readyChannels()
+            override fun ensureInputListening(vmKey: String) {
+                inputSocketHost.ensureListening(vmKey)
             }
 
-            override fun writeInput(channel: Int, data: ByteArray): Boolean {
-                return inputSocketHost.write(channel, data)
+            override fun getInputChannelsReady(vmKey: String): BooleanArray {
+                return inputSocketHost.readyChannels(vmKey)
+            }
+
+            override fun writeInput(vmKey: String, channel: Int, data: ByteArray): Boolean {
+                return inputSocketHost.write(vmKey, channel, data)
             }
         }
     }
 
     override fun onUnbind(intent: Intent): Boolean {
-        inputSocketHost.close()
+        inputSocketHost.closeAll()
         return super.onUnbind(intent)
     }
 
-    private fun doWaitForDisplayBinder(): IBinder? {
-        Log.i(TAG, "waitForDisplayBinder: uid=${android.os.Process.myUid()}")
+    private fun doWaitForDisplayBinder(serviceName: String): IBinder? {
+        Log.i(TAG, "waitForDisplayBinder('$serviceName'): uid=${android.os.Process.myUid()}")
 
-        // Look up the "crosvm_display" service that standalone crosvm registers directly to
-        // the service manager (via --android-display-service crosvm_display).
-        Log.i(TAG, "Trying direct ServiceManager lookup for '$DIRECT_SERVICE_NAME'...")
-        val directBinder = smCheckService(DIRECT_SERVICE_NAME)
+        // Look up the display service that standalone crosvm registers directly to the service
+        // manager (via --android-display-service <serviceName>). serviceName is the per-VM key.
+        Log.i(TAG, "Trying direct ServiceManager lookup for '$serviceName'...")
+        val directBinder = smCheckService(serviceName)
         if (directBinder != null) {
             Log.i(TAG, "OK: got display binder directly from ServiceManager")
             return directBinder
         }
         Log.i(TAG, "Not found, waiting up to 5s...")
-        val directWait = smWaitForServiceWithTimeout(DIRECT_SERVICE_NAME, 5000L)
+        val directWait = smWaitForServiceWithTimeout(serviceName, 5000L)
         if (directWait != null) {
             Log.i(TAG, "OK: got display binder via waitForService")
             return directWait
         }
 
-        Log.e(TAG, "'$DIRECT_SERVICE_NAME' not found — is crosvm running with --android-display-service $DIRECT_SERVICE_NAME?")
+        Log.e(TAG, "'$serviceName' not found — is crosvm running with --android-display-service $serviceName?")
         return null
     }
 }

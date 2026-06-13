@@ -41,6 +41,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** String counterpart of [PrefBool]: Compose-observable and persisted on every change. */
+    private inner class PrefString(private val key: String, default: String) :
+        ReadWriteProperty<Any?, String> {
+        private val state = mutableStateOf(settings.getString(key, default))
+        override fun getValue(thisRef: Any?, property: KProperty<*>): String = state.value
+        override fun setValue(thisRef: Any?, property: KProperty<*>, value: String) {
+            if (state.value == value) return
+            state.value = value
+            settings.setString(key, value)
+        }
+    }
+
     /** Must be set from Activity before calling start() */
     var appContext: Context? = null
 
@@ -107,9 +119,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** GPU backend parsed from the running crosvm's launch args; null until known. Read-only. */
     var gpuBackend by mutableStateOf<String?>(null)
         private set
-    var serviceName by mutableStateOf("crosvm_display")
-        private set
+    /** The crosvm display service name = per-VM key. Editable in Settings, persisted, drives both
+     * the display-binder lookup and the input socket namespace (see [CrosvmDisplayManager]). */
+    var serviceName by PrefString("serviceName", "crosvm_display")
     var environmentReport by mutableStateOf<EnvironmentChecker.EnvironmentReport?>(null)
+        private set
+    /** crosvm display service names discovered via the service manager — one per running VM. */
+    val discoveredServices = mutableStateListOf<String>()
+    var isDiscovering by mutableStateOf(false)
         private set
 
     // ── App-side UI preferences (persisted via SettingsStore, wired to behavior below) ──
@@ -200,6 +217,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             errorMessage = null
 
+            // Pin the per-VM key for this whole connection: display lookup + input sockets use it.
+            manager.serviceName = serviceName.trim()
+
             currentStep = 1
             val seMode = if (selinuxForcePermissive) "SELinux→permissive (fallback)" else "SELinux enforcing"
             statusText = "Exempting hidden APIs…"
@@ -223,6 +243,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             addLog("✅ RootDisplayService bound — will wait for crosvm in surfaceCreated")
+
+            // Open this VM's input listeners now, before its crosvm connects them at startup.
+            // Per-VM socket namespace, so concurrent VMs never collide (see InputSocketHost).
+            withContext(Dispatchers.IO) { manager.ensureInputListening() }
+            addLog("🎧 Input listeners ready for '${manager.serviceName}'")
 
             currentStep = 3
             statusText = "Surface ready — waiting for crosvm…"
@@ -397,7 +422,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             addLog("📋 Scanning services…")
             val check = withContext(Dispatchers.IO) {
-                manager.shellCheckService("crosvm_display")
+                manager.shellCheckService(serviceName.trim())
             }
             addLog("service check: $check")
             val services = withContext(Dispatchers.IO) { manager.listRelevantServices() }
@@ -407,6 +432,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 addLog("⚠️ No relevant services found")
             }
+        }
+    }
+
+    /**
+     * Scans the service manager for registered crosvm display services (one per VM) and updates
+     * [discoveredServices]. If the current [serviceName] isn't among them but exactly one was
+     * found, adopt it — the common single-VM case where the user needn't know the name.
+     */
+    fun discoverServices() {
+        if (!hasRoot || isDiscovering) return
+        viewModelScope.launch {
+            isDiscovering = true
+            val found = withContext(Dispatchers.IO) { manager.discoverDisplayServices() }
+            discoveredServices.clear()
+            discoveredServices.addAll(found)
+            isDiscovering = false
+            when {
+                found.isEmpty() -> addLog("🔍 未发现已注册的 crosvm 显示服务")
+                else -> addLog("🔍 发现 ${found.size} 个显示服务: ${found.joinToString()}")
+            }
+            if (found.size == 1 && serviceName !in found) {
+                serviceName = found.first()
+                addLog("➡️ 已自动选中唯一服务: $serviceName")
+            }
+        }
+    }
+
+    /**
+     * The crosvm launch flags this VM must be started with so it matches the app: the display
+     * service name plus the four per-VM input socket paths (width/height = current display size).
+     * crosvm is launched to match the app (the app owns the input listeners), so this is the
+     * artifact the user actually needs — not service discovery.
+     */
+    fun crosvmLaunchArgs(): String {
+        val name = serviceName.trim().ifEmpty { "crosvm_display" }
+        val p = InputSocketHost.pathsFor(name)
+        return buildString {
+            append("--android-display-service $name \\\n")
+            append("--input multi-touch[path=${p[InputSocketHost.MULTITOUCH]},width=$displayWidth,height=$displayHeight] \\\n")
+            append("--input keyboard[path=${p[InputSocketHost.KEYBOARD]}] \\\n")
+            append("--input mouse[path=${p[InputSocketHost.MOUSE]}] \\\n")
+            append("--input switches[path=${p[InputSocketHost.SWITCHES]}]")
         }
     }
 

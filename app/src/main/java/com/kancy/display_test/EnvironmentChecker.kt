@@ -106,15 +106,16 @@ class EnvironmentChecker(private val context: Context) {
     }
 
     private fun checkCrosvmService(manager: CrosvmDisplayManager): CheckResult {
+        val name = manager.serviceName
         return try {
             val available = manager.isServiceAvailable()
             if (available) {
-                CheckResult(true, "crosvm_display service found")
+                CheckResult(true, "$name service found")
             } else {
                 CheckResult(
                     false,
-                    "crosvm_display service not found",
-                    "Start crosvm with --android-display-service crosvm_display"
+                    "$name service not found",
+                    "Start crosvm with --android-display-service $name"
                 )
             }
         } catch (e: Exception) {
