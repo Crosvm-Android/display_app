@@ -86,6 +86,14 @@ class MainViewModel : ViewModel() {
     var environmentReport by mutableStateOf<EnvironmentChecker.EnvironmentReport?>(null)
         private set
 
+    // ── App-side UI preferences (session-scoped; not yet persisted) ─────────────
+    var autoConnect by mutableStateOf(true)
+    var lockPointerOnOpen by mutableStateOf(false)
+    var showFunctionKeysPref by mutableStateOf(true)
+    var tabletModeOnNoKeyboard by mutableStateOf(true)
+    var keepScreenOn by mutableStateOf(true)
+    var showLastFrameOnDisconnect by mutableStateOf(true)
+
     // SurfaceView refs — set by Composable AndroidView factories
     var mainSurfaceView: SurfaceView? = null
     var cursorSurfaceView: SurfaceView? = null

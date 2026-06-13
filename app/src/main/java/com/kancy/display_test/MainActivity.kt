@@ -1,8 +1,7 @@
 package com.kancy.display_test
 
-import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.app.PictureInPictureParams
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -16,55 +15,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.kancy.display_test.ui.theme.Display_testTheme
 
@@ -122,7 +83,6 @@ class MainActivity : ComponentActivity() {
                 if (event.source and android.view.InputDevice.SOURCE_MOUSE != 0) {
                     viewModel.inputForwarder?.let { forwarder ->
                         if (!viewModel.isPointerCaptured) {
-                            // Absolute mouse mode
                             forwarder.sendMouseEvent(event, false)
                             true
                         } else {
@@ -172,13 +132,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             Display_testTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    CrosvmDisplayTestScreen(
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    AppRoot(
                         viewModel = viewModel,
                         mainSurfaceView = mainSurfaceView,
                         cursorSurfaceView = cursorSurfaceView,
-                        onToggleFullscreen = { toggleFullscreen() },
-                        modifier = Modifier.padding(innerPadding)
+                        activity = this@MainActivity,
                     )
                 }
             }
@@ -193,7 +155,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onResume()
-        // Restore immersive mode if we were in fullscreen
         if (viewModel.isFullscreen) {
             enterImmersiveMode()
         }
@@ -221,29 +182,19 @@ class MainActivity : ComponentActivity() {
         viewModel.toggleFullscreen()
         if (viewModel.isFullscreen) {
             enterImmersiveMode()
-            // Suggest landscape orientation in fullscreen
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
             exitImmersiveMode()
-            // Restore unspecified orientation
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
+    @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
-            // Priority 1: Exit fullscreen if in fullscreen
-            viewModel.isFullscreen -> {
-                toggleFullscreen()
-            }
-            // Priority 2: Enter PiP if connected and not in fullscreen
-            viewModel.isConnected && !viewModel.isInPipMode -> {
-                enterPictureInPicture()
-            }
-            // Priority 3: Default back behavior
-            else -> {
-                super.onBackPressed()
-            }
+            viewModel.isFullscreen -> toggleFullscreen()
+            viewModel.isConnected && !viewModel.isInPipMode -> enterPictureInPicture()
+            else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
 
@@ -264,8 +215,6 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
                 val aspectRatio = Rational(viewModel.displayWidth, viewModel.displayHeight)
-
-                // Get source rect hint from main surface view position
                 val location = IntArray(2)
                 mainSurfaceView.getLocationInWindow(location)
                 val sourceRect = android.graphics.Rect(
@@ -274,7 +223,6 @@ class MainActivity : ComponentActivity() {
                     location[0] + mainSurfaceView.width,
                     location[1] + mainSurfaceView.height
                 )
-
                 val params = PictureInPictureParams.Builder()
                     .setAspectRatio(aspectRatio)
                     .setSourceRectHint(sourceRect)
@@ -287,13 +235,12 @@ class MainActivity : ComponentActivity() {
     fun showSoftKeyboard() {
         val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
         mainSurfaceView.requestFocus()
-        imm.showSoftInput(mainSurfaceView, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+        imm.showSoftInput(mainSurfaceView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
         Log.d("MainActivity", "Soft keyboard requested")
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Auto-enter PiP when user presses home button (if connected)
         if (viewModel.isConnected && !viewModel.isFullscreen) {
             enterPictureInPicture()
         }
@@ -309,403 +256,47 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class AppScreen { Home, Settings, Diagnostics }
+
+/**
+ * Top-level UI: a fullscreen immersive display when [MainViewModel.isFullscreen], otherwise
+ * the Companion Home / Settings / Diagnostics screens. The two pre-created SurfaceViews live
+ * on exactly one screen at a time (Home preview or fullscreen), never both.
+ */
 @Composable
-fun CrosvmDisplayTestScreen(
+fun AppRoot(
     viewModel: MainViewModel,
     mainSurfaceView: SurfaceView,
     cursorSurfaceView: SurfaceView,
-    onToggleFullscreen: () -> Unit,
-    modifier: Modifier = Modifier,
+    activity: MainActivity,
 ) {
-    var showFunctionKeys by remember { mutableStateOf(false) }
-    val activity = androidx.compose.ui.platform.LocalContext.current as? MainActivity
-
     if (viewModel.isFullscreen) {
-        // ── Fullscreen — same SurfaceViews, just placed full-screen ─────────────
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color.Black)
-        ) {
-            CrosvmSurfaceViews(
+        ImmersiveDisplay(
+            viewModel = viewModel,
+            mainSurfaceView = mainSurfaceView,
+            cursorSurfaceView = cursorSurfaceView,
+            onExitFullscreen = { activity.toggleFullscreen() },
+            onTogglePointerCapture = { activity.togglePointerCapture() },
+            onShowKeyboard = { activity.showSoftKeyboard() },
+            onEnterPip = { activity.enterPictureInPicture() },
+        )
+        return
+    }
+
+    var screen by remember { mutableStateOf(AppScreen.Home) }
+    Box(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+        when (screen) {
+            AppScreen.Home -> CompanionHomeScreen(
+                viewModel = viewModel,
                 mainSurfaceView = mainSurfaceView,
                 cursorSurfaceView = cursorSurfaceView,
-                modifier = Modifier.fillMaxSize()
+                onOpenSettings = { screen = AppScreen.Settings },
+                onOpenDiagnostics = { screen = AppScreen.Diagnostics },
+                onOpenDisplay = { activity.toggleFullscreen() },
             )
-            IconButton(
-                onClick = onToggleFullscreen,
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-            ) {
-                Icon(Icons.Filled.Close, contentDescription = "Exit Fullscreen", tint = Color.White)
-            }
-            // Function keys button in fullscreen
-            if (viewModel.inputForwarder != null) {
-                Row(
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // Pointer lock button
-                    OutlinedButton(
-                        onClick = { activity?.togglePointerCapture() }
-                    ) {
-                        Text(
-                            if (viewModel.isPointerCaptured) "🔒 Unlock" else "🖱️ Lock",
-                            fontSize = 12.sp,
-                            color = Color.White
-                        )
-                    }
-                    // Function keys button
-                    OutlinedButton(
-                        onClick = { showFunctionKeys = true }
-                    ) {
-                        Text("Keys", fontSize = 12.sp, color = Color.White)
-                    }
-                }
-            }
+            AppScreen.Settings -> SettingsScreen(viewModel, onBack = { screen = AppScreen.Home })
+            AppScreen.Diagnostics -> DiagnosticsScreen(viewModel, onBack = { screen = AppScreen.Home })
         }
-    } else {
-        // ── Normal mode ──────────────────────────────────────────────────────────
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(12.dp)
-        ) {
-            // Title + root indicator
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Crosvm Display Test",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier.size(8.dp).clip(CircleShape)
-                            .background(if (viewModel.hasRoot) Color.Green else Color.Red)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (viewModel.hasRoot) "root" else "no root",
-                        fontSize = 11.sp, fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Action buttons
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { viewModel.start() },
-                    enabled = viewModel.hasRoot && viewModel.currentStep == 0,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Connect") }
-                Button(
-                    onClick = { viewModel.stop() },
-                    enabled = viewModel.currentStep > 0,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.weight(1f)
-                ) { Text("Stop") }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Secondary actions
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { viewModel.listServices() }, modifier = Modifier.weight(1f)) {
-                    Text("List", fontSize = 12.sp)
-                }
-                OutlinedButton(onClick = { viewModel.checkEnvironment() }, modifier = Modifier.weight(1f)) {
-                    Text("Check", fontSize = 12.sp)
-                }
-                if (viewModel.isConnected) {
-                    OutlinedButton(onClick = { viewModel.saveFrame() }, modifier = Modifier.weight(1f)) {
-                        Text("Save", fontSize = 12.sp)
-                    }
-                }
-                if (viewModel.inputForwarder != null) {
-                    OutlinedButton(onClick = { showFunctionKeys = true }, modifier = Modifier.weight(1f)) {
-                        Text("Keys", fontSize = 12.sp)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Status card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = when {
-                        viewModel.errorMessage != null -> MaterialTheme.colorScheme.errorContainer
-                        viewModel.isConnected          -> MaterialTheme.colorScheme.primaryContainer
-                        viewModel.currentStep > 0      -> MaterialTheme.colorScheme.secondaryContainer
-                        else                           -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                )
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.size(12.dp).clip(CircleShape).background(
-                                when {
-                                    viewModel.errorMessage != null -> Color.Red
-                                    viewModel.surfaceSent          -> Color.Green
-                                    viewModel.isConnected          -> Color(0xFF4CAF50)
-                                    viewModel.currentStep > 0      -> Color.Yellow
-                                    else                           -> Color.Gray
-                                }
-                            )
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(viewModel.statusText, fontWeight = FontWeight.SemiBold,
-                            style = MaterialTheme.typography.bodyMedium)
-                    }
-                    if (viewModel.surfaceInfo.isNotEmpty()) {
-                        Text("Surface: ${viewModel.surfaceInfo}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(top = 4.dp))
-                    }
-                    if (viewModel.errorMessage != null) {
-                        Text(viewModel.errorMessage!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 4.dp))
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Environment check results
-            viewModel.environmentReport?.let { report ->
-                if (!report.allPassed()) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer
-                        )
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                "Environment Issues",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            report.getFailures().forEach { (name, result) ->
-                                Column(modifier = Modifier.padding(vertical = 2.dp)) {
-                                    Text(
-                                        "❌ $name: ${result.message}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp
-                                    )
-                                    result.suggestion?.let { suggestion ->
-                                        Text(
-                                            "   → $suggestion",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-            }
-
-            // Session info card (read-only display config)
-            if (viewModel.isConnected && viewModel.surfaceSent) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Session Info", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Service name
-                        Text("Service: ${viewModel.serviceName}",
-                            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-
-                        // Display config
-                        Text("Resolution: ${viewModel.displayWidth} × ${viewModel.displayHeight}",
-                            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                        if (viewModel.displayDpi > 0) {
-                            Text("DPI: ${viewModel.displayDpi}",
-                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                        }
-                        if (viewModel.displayRefreshRate > 0) {
-                            Text("Refresh Rate: ${viewModel.displayRefreshRate} Hz",
-                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                        }
-
-                        // Cursor stream status
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 2.dp)
-                        ) {
-                            Text("Cursor Stream: ",
-                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                            Box(
-                                modifier = Modifier.size(8.dp).clip(CircleShape)
-                                    .background(if (viewModel.cursorStreamActive) Color.Green else Color.Gray)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                if (viewModel.cursorStreamActive) "Active" else "Inactive",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp
-                            )
-                        }
-
-                        Text("(Reported by crosvm)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            fontSize = 10.sp,
-                            modifier = Modifier.padding(top = 4.dp))
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // VM Display header with fullscreen button
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "VM Display (${viewModel.displayWidth}×${viewModel.displayHeight}):",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    // Pointer lock indicator
-                    if (viewModel.isPointerCaptured) {
-                        Text(
-                            "🔒",
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    // PiP button
-                    if (viewModel.inputForwarder != null && !viewModel.isInPipMode) {
-                        IconButton(
-                            onClick = { activity?.enterPictureInPicture() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Text("⬜", fontSize = 16.sp)
-                        }
-                    }
-                    // Soft keyboard button
-                    if (viewModel.inputForwarder != null) {
-                        IconButton(
-                            onClick = { activity?.showSoftKeyboard() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Text("⌨️", fontSize = 16.sp)
-                        }
-                    }
-                    // Pointer lock toggle
-                    if (viewModel.inputForwarder != null) {
-                        IconButton(
-                            onClick = { activity?.togglePointerCapture() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Text(
-                                if (viewModel.isPointerCaptured) "🔒" else "🖱️",
-                                fontSize = 16.sp
-                            )
-                        }
-                    }
-                    IconButton(
-                        onClick = onToggleFullscreen,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(Icons.Filled.Fullscreen, contentDescription = "Fullscreen",
-                            tint = MaterialTheme.colorScheme.primary)
-                    }
-                }
-            }
-
-            // 16:9 display area — reuses the same SurfaceViews
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(viewModel.displayWidth.toFloat() / viewModel.displayHeight.toFloat())
-                    .background(Color.Black)
-            ) {
-                CrosvmSurfaceViews(
-                    mainSurfaceView = mainSurfaceView,
-                    cursorSurfaceView = cursorSurfaceView,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Log card
-            Card(
-                modifier = Modifier.fillMaxWidth().height(160.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                val listState = rememberLazyListState()
-                LaunchedEffect(viewModel.logMessages.size) {
-                    if (viewModel.logMessages.isNotEmpty())
-                        listState.animateScrollToItem(viewModel.logMessages.size - 1)
-                }
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Log", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        TextButton(onClick = { viewModel.clearLogs() }, modifier = Modifier.height(28.dp)) {
-                            Text("Clear", fontSize = 11.sp)
-                        }
-                    }
-                    HorizontalDivider()
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        items(viewModel.logMessages) { msg ->
-                            Text(msg, fontFamily = FontFamily.Monospace, fontSize = 10.sp,
-                                lineHeight = 14.sp, modifier = Modifier.padding(vertical = 1.dp))
-                        }
-                    }
-                }
-            }
-        }
-
-        // Function keys panel
-        FunctionKeysPanel(
-            visible = showFunctionKeys,
-            onDismiss = { showFunctionKeys = false },
-            onKeyDown = { scanCode ->
-                viewModel.inputForwarder?.sendRawKeyEvent(scanCode, true)
-            },
-            onKeyUp = { scanCode ->
-                viewModel.inputForwarder?.sendRawKeyEvent(scanCode, false)
-            }
-        )
     }
 }
 
@@ -721,12 +312,10 @@ fun CrosvmSurfaceViews(
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
-        // Main display surface
         AndroidView(
             factory = { mainSurfaceView },
             modifier = Modifier.fillMaxSize()
         )
-        // Cursor overlay — on top
         AndroidView(
             factory = { cursorSurfaceView },
             modifier = Modifier.fillMaxSize()
