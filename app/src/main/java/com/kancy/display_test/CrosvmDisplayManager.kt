@@ -50,19 +50,55 @@ class CrosvmDisplayManager {
         return ok
     }
 
-    fun exemptHiddenApis(): Boolean {
+    /**
+     * Exempts hidden APIs and handles SELinux.
+     *
+     * Does NOT globally disable SELinux by default. Root does not bypass SELinux, but crosvm
+     * launched from a root/su shell inherits a permissive su/magisk domain, so the crosvm→socket
+     * path usually works while enforcing; only [forcePermissive] (a user fallback) reverts to the
+     * old global `setenforce 0`. When left enforcing, [collectSelinuxDenials] surfaces any
+     * `avc: denied` so targeted allow rules can be written instead of the global switch.
+     */
+    fun exemptHiddenApis(forcePermissive: Boolean): Boolean {
         try {
             Shell.cmd(
                 "settings put global hidden_api_policy 1",
                 "settings put global hidden_api_blacklist_exemptions '*'",
-                "setenforce 0"
             ).exec()
+            if (forcePermissive) {
+                Shell.cmd("setenforce 0").exec()
+                Log.i(TAG, "SELinux: forced global permissive (fallback enabled)")
+            } else {
+                Log.i(TAG, "SELinux: left enforcing (policy tool: ${detectPolicyTool()})")
+            }
             val enforceResult = Shell.cmd("getenforce").exec()
             Log.i(TAG, "SELinux: ${enforceResult.out.joinToString("")}")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "exemptHiddenApis failed", e)
             return false
+        }
+    }
+
+    /** Detects which SELinux policy-injection tool is available (for targeted allow rules). */
+    fun detectPolicyTool(): String {
+        return try {
+            val out = Shell.cmd(
+                "command -v magiskpolicy ksud sepolicy-inject 2>/dev/null | head -1"
+            ).exec().out.firstOrNull()?.trim().orEmpty()
+            out.ifEmpty { "none" }
+        } catch (_: Exception) { "none" }
+    }
+
+    /** Returns recent SELinux `avc: denied` lines (kernel log + logcat) for diagnosis. */
+    fun collectSelinuxDenials(): List<String> {
+        return try {
+            Shell.cmd(
+                "(dmesg 2>/dev/null; logcat -d -b all 2>/dev/null) | " +
+                    "grep -iE 'avc: *denied' | tail -60"
+            ).exec().out.filter { it.isNotBlank() }
+        } catch (e: Exception) {
+            listOf("collectSelinuxDenials failed: ${e.message}")
         }
     }
 

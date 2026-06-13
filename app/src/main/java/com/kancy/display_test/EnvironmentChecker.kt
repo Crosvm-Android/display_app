@@ -92,14 +92,13 @@ class EnvironmentChecker(private val context: Context) {
             val result = com.topjohnwu.superuser.Shell.cmd("getenforce").exec()
             val status = result.out.firstOrNull() ?: "unknown"
 
+            // Enforcing is acceptable: crosvm from a root shell runs in a permissive su/magisk
+            // domain, so the app tries to work without globally disabling SELinux. Either mode
+            // passes; if enforcing actually blocks something, "抓 SELinux 拒绝" surfaces it.
             if (status.contains("Permissive", ignoreCase = true)) {
                 CheckResult(true, "SELinux: Permissive")
             } else {
-                CheckResult(
-                    false,
-                    "SELinux: $status (needs Permissive)",
-                    "Run: setenforce 0"
-                )
+                CheckResult(true, "SELinux: $status (trying without global permissive)")
             }
         } catch (e: Exception) {
             CheckResult(false, "Cannot check SELinux status", null)

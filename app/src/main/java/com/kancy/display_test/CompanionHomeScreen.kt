@@ -231,6 +231,11 @@ fun SettingsScreen(
                     )
                 }
                 SettingRow("启动时自动连接", null, viewModel.autoConnect) { viewModel.autoConnect = it }
+                SettingRow(
+                    "强制 SELinux permissive（兜底）",
+                    "默认关，保持 enforcing；若 enforcing 下连不通再打开",
+                    viewModel.selinuxForcePermissive,
+                ) { viewModel.selinuxForcePermissive = it }
             }
 
             SectionCard(title = "输入默认值") {

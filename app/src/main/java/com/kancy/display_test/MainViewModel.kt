@@ -120,6 +120,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var tabletModeOnNoKeyboard by PrefBool("tabletModeOnNoKeyboard", true)
     var keepScreenOn by PrefBool("keepScreenOn", true)
     var showLastFrameOnDisconnect by PrefBool("showLastFrameOnDisconnect", true)
+    /** Fallback: globally `setenforce 0`. Off by default — we try to run with SELinux enforcing. */
+    var selinuxForcePermissive by PrefBool("selinuxForcePermissive", false)
 
     // SurfaceView refs — set by Composable AndroidView factories
     var mainSurfaceView: SurfaceView? = null
@@ -200,11 +202,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             errorMessage = null
 
             currentStep = 1
-            statusText = "Exempting hidden APIs + SELinux…"
-            addLog("🔓 Exempting hidden APIs + setting SELinux permissive…")
-            val exempted = withContext(Dispatchers.IO) { manager.exemptHiddenApis() }
+            val seMode = if (selinuxForcePermissive) "SELinux→permissive (fallback)" else "SELinux enforcing"
+            statusText = "Exempting hidden APIs…"
+            addLog("🔓 Exempting hidden APIs ($seMode)…")
+            val exempted = withContext(Dispatchers.IO) { manager.exemptHiddenApis(selinuxForcePermissive) }
             if (!exempted) { fail("Failed to exempt hidden APIs / SELinux"); return@launch }
-            addLog("✅ Hidden API restrictions lifted + SELinux permissive")
+            addLog("✅ Hidden APIs exempted; $seMode")
 
             currentStep = 2
             statusText = "Binding root service…"
@@ -463,6 +466,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (best?.all { it != null } == true) return best
         }
         return best
+    }
+
+    /** Dumps recent SELinux denials to the log so targeted allow rules can be written. */
+    fun collectSelinuxDenials() {
+        viewModelScope.launch {
+            addLog("🔎 Collecting SELinux denials (policy tool: ${withContext(Dispatchers.IO) { manager.detectPolicyTool() }})…")
+            val denials = withContext(Dispatchers.IO) { manager.collectSelinuxDenials() }
+            if (denials.isEmpty()) {
+                addLog("✅ No avc:denied found (nothing blocked, or already permissive)")
+            } else {
+                addLog("⚠️ ${denials.size} SELinux denial line(s):")
+                denials.forEach { addLog("   $it") }
+            }
+        }
     }
 
     private fun fail(msg: String) {

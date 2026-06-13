@@ -182,11 +182,14 @@ private fun InfoTab(viewModel: MainViewModel) {
             } else {
                 EnvRow("Root shell", report.rootAccess.passed, report.rootAccess.message)
                 EnvRow("Hidden API 豁免", report.hiddenApiPolicy.passed, report.hiddenApiPolicy.message, top = true)
-                EnvRow("SELinux permissive", report.selinuxStatus.passed, report.selinuxStatus.message, top = true)
+                EnvRow("SELinux", report.selinuxStatus.passed, report.selinuxStatus.message, top = true)
                 EnvRow("crosvm_display 注册", report.crosvmService.passed, report.crosvmService.message, top = true)
                 EnvRow("crosvm 进程", report.crosvmProcess.passed, report.crosvmProcess.message, top = true)
                 Spacer(Modifier.size(8.dp))
-                TextButton(onClick = { viewModel.checkEnvironment() }) { Text("重新检查") }
+                Row {
+                    TextButton(onClick = { viewModel.checkEnvironment() }) { Text("重新检查") }
+                    TextButton(onClick = { viewModel.collectSelinuxDenials() }) { Text("抓 SELinux 拒绝") }
+                }
             }
         }
     }
