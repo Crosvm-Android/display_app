@@ -1,119 +1,155 @@
 package com.kancy.display_test
 
-import android.crosvm.ICrosvmAndroidDisplayService
+import android.os.ParcelFileDescriptor
 import android.util.Log
-import android.view.KeyEvent
 import android.view.MotionEvent
+import java.io.OutputStream
+import java.util.concurrent.Executors
 
 /**
- * Centralized input forwarding to the guest VM via ICrosvmAndroidDisplayService.
+ * Centralized input forwarding to the guest VM.
  *
- * Handles:
- * - Touch events (multi-touch with coordinate scaling)
- * - Mouse events (absolute and relative pointer capture)
- * - Keyboard events (hardware keyboard + virtual function keys)
- * - Tablet/desktop mode switching
+ * Events are encoded with [EvdevEncoder] and written to the per-device unix sockets that
+ * crosvm reads from (`--input multi-touch/keyboard/mouse/switches[path=...]`). The host ends
+ * of those sockets are obtained from [IRootDisplayService.getInputSockets] (see
+ * [InputSocketHost]). This path requires NO changes to crosvm and does NOT go through
+ * ICrosvmAndroidDisplayService (that binder lives inside crosvm and cannot inject input).
+ *
+ * Writes are serialized on a single background thread so the UI thread never blocks on a
+ * socket, mirroring VirtualMachine.java's input executor. MotionEvents are copied before
+ * being handed to the worker because the framework recycles the originals.
+ *
+ * @param sockets 4-element array indexed by [InputSocketHost] channel constants; null
+ *   elements mean crosvm has not connected that channel yet (those events are dropped).
  */
 class InputForwarder(
-    private val displayService: ICrosvmAndroidDisplayService,
+    sockets: Array<ParcelFileDescriptor?>,
     private val logger: (String) -> Unit = {}
 ) {
-
     companion object {
         private const val TAG = "InputForwarder"
+    }
+
+    private fun openStream(pfd: ParcelFileDescriptor): OutputStream =
+        ParcelFileDescriptor.AutoCloseOutputStream(pfd)
+
+    private val touchOut = sockets.getOrNull(InputSocketHost.MULTITOUCH)?.let(::openStream)
+    private val keyOut = sockets.getOrNull(InputSocketHost.KEYBOARD)?.let(::openStream)
+    private val mouseOut = sockets.getOrNull(InputSocketHost.MOUSE)?.let(::openStream)
+    private val switchesOut = sockets.getOrNull(InputSocketHost.SWITCHES)?.let(::openStream)
+
+    private val worker = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "InputForwarder").apply { isDaemon = true }
+    }
+
+    val isTouchReady get() = touchOut != null
+    val isKeyboardReady get() = keyOut != null
+    val isMouseReady get() = mouseOut != null
+    val isSwitchesReady get() = switchesOut != null
+
+    private inline fun submit(name: String, crossinline block: () -> Unit) {
+        try {
+            worker.execute {
+                try {
+                    block()
+                } catch (e: Exception) {
+                    Log.e(TAG, "$name failed", e)
+                    logger("⚠️ $name failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            // Executor rejected (shutting down) — ignore.
+            Log.d(TAG, "$name dropped: ${e.message}")
+        }
     }
 
     // ── Touch ──────────────────────────────────────────────────────────────
 
     /**
-     * Forwards a touch event to the guest.
-     * @param event The MotionEvent from the touch view
-     * @param scaleX Scale factor: guestWidth / viewWidth
-     * @param scaleY Scale factor: guestHeight / viewHeight
+     * @param scaleX guestWidth / viewWidth
+     * @param scaleY guestHeight / viewHeight
      */
     fun sendTouchEvent(event: MotionEvent, scaleX: Float, scaleY: Float) {
-        try {
-            displayService.sendTouchEvent(event, scaleX, scaleY)
-        } catch (e: Exception) {
-            Log.e(TAG, "sendTouchEvent failed", e)
-            logger("⚠️ Touch event failed: ${e.message}")
+        val out = touchOut ?: return
+        val copy = MotionEvent.obtainNoHistory(event)
+        submit("sendTouchEvent") {
+            try {
+                EvdevEncoder.sendMultiTouch(out, copy, scaleX, scaleY)
+            } finally {
+                copy.recycle()
+            }
         }
     }
 
     // ── Mouse ──────────────────────────────────────────────────────────────
 
     /**
-     * Forwards a mouse event to the guest.
-     * @param event The MotionEvent
-     * @param isRelative True for relative (pointer capture) mode, false for absolute
+     * @param isRelative True for pointer-capture (relative) mode. The crosvm `mouse` device is
+     *   relative; under capture, MotionEvent x/y are already deltas. Absolute (non-capture)
+     *   mouse should be routed through the touch device by the caller; relative deltas are
+     *   sent here regardless.
      */
     fun sendMouseEvent(event: MotionEvent, isRelative: Boolean) {
-        try {
-            displayService.sendMouseEvent(event, isRelative)
-        } catch (e: Exception) {
-            Log.e(TAG, "sendMouseEvent failed", e)
-            logger("⚠️ Mouse event failed: ${e.message}")
+        val out = mouseOut ?: return
+        val copy = MotionEvent.obtainNoHistory(event)
+        submit("sendMouseEvent") {
+            try {
+                EvdevEncoder.sendMouse(out, copy)
+            } finally {
+                copy.recycle()
+            }
         }
     }
 
     // ── Keyboard ───────────────────────────────────────────────────────────
 
     /**
-     * Forwards a hardware keyboard key event.
-     * @param keyCode Android KeyEvent.KEYCODE_*
-     * @param pressed True for key down, false for key up
-     * @return True if the key was handled
+     * Forwards a hardware/virtual key by Android key code.
+     * @return true if the key code is mapped, false otherwise.
      */
     fun sendKeyEvent(keyCode: Int, pressed: Boolean): Boolean {
-        // Check if this key needs Shift synthesis (e.g., @ = Shift+2)
+        if (keyOut == null) return false
+
         val synthesis = KeyCodeMapper.needsShiftSynthesis(keyCode)
         if (synthesis != null) {
-            val (baseKey, needsShift) = synthesis
+            val (baseKey, _) = synthesis
+            val base = KeyCodeMapper.androidToEvdev(baseKey) ?: return false
             if (pressed) {
-                // Press: Shift down → base key down
                 sendRawKeyEvent(KeyCodeMapper.KEY_LEFTSHIFT, true)
-                sendRawKeyEvent(KeyCodeMapper.androidToEvdev(baseKey) ?: return false, true)
+                sendRawKeyEvent(base, true)
             } else {
-                // Release: base key up → Shift up
-                sendRawKeyEvent(KeyCodeMapper.androidToEvdev(baseKey) ?: return false, false)
+                sendRawKeyEvent(base, false)
                 sendRawKeyEvent(KeyCodeMapper.KEY_LEFTSHIFT, false)
             }
             return true
         }
 
-        // Normal key mapping
         val scanCode = KeyCodeMapper.androidToEvdev(keyCode) ?: return false
         sendRawKeyEvent(scanCode, pressed)
         return true
     }
 
-    /**
-     * Sends a raw evdev scan code to the guest.
-     * @param scanCode Linux evdev KEY_* code
-     * @param pressed True for key down, false for key up
-     */
+    /** Sends a raw Linux evdev KEY_* scan code. */
     fun sendRawKeyEvent(scanCode: Int, pressed: Boolean) {
-        try {
-            displayService.sendKeyEvent(scanCode, pressed)
-        } catch (e: Exception) {
-            Log.e(TAG, "sendKeyEvent(scanCode=$scanCode, pressed=$pressed) failed", e)
-            logger("⚠️ Key event failed: ${e.message}")
+        val out = keyOut ?: return
+        submit("sendRawKeyEvent") {
+            EvdevEncoder.sendKey(out, scanCode.toShort(), pressed)
         }
     }
 
     // ── Tablet/Desktop mode ────────────────────────────────────────────────
 
-    /**
-     * Sends tablet/desktop mode state to the guest.
-     * @param isTablet True for tablet mode (no physical keyboard), false for desktop mode
-     */
     fun sendTabletModeEvent(isTablet: Boolean) {
-        try {
-            displayService.sendTabletModeEvent(isTablet)
+        val out = switchesOut ?: return
+        submit("sendTabletModeEvent") {
+            EvdevEncoder.sendTabletMode(out, isTablet)
             logger("📱 Tablet mode: $isTablet")
-        } catch (e: Exception) {
-            Log.e(TAG, "sendTabletModeEvent failed", e)
-            logger("⚠️ Tablet mode event failed: ${e.message}")
         }
+    }
+
+    /** Closes the worker and all sockets. */
+    fun close() {
+        worker.shutdownNow()
+        listOf(touchOut, keyOut, mouseOut, switchesOut).forEach { runCatching { it?.close() } }
     }
 }

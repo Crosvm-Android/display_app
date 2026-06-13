@@ -226,11 +226,22 @@ class MainViewModel : ViewModel() {
 
                         statusText = "Connected — VM display active"
                         addLog("✅ VM display active")
-                        // Create InputForwarder now that service is connected
-                        manager.waitForDisplayBinder()?.let { binder ->
-                            val svc = android.crosvm.ICrosvmAndroidDisplayService.Stub.asInterface(binder)
-                            inputForwarder = InputForwarder(svc) { msg -> addLog(msg) }
-                            addLog("✅ InputForwarder ready")
+                        // Create InputForwarder from the host-side input sockets the root
+                        // service holds. crosvm connects to those sockets at ITS startup, so a
+                        // channel may not be ready yet (getInputSockets() waits briefly). Events
+                        // for unconnected channels are dropped until crosvm (re)connects.
+                        val sockets = withContext(Dispatchers.IO) { manager.getInputSockets() }
+                        if (sockets != null) {
+                            inputForwarder?.close()
+                            val fwd = InputForwarder(sockets) { msg -> addLog(msg) }
+                            inputForwarder = fwd
+                            val ready = listOfNotNull(
+                                if (fwd.isTouchReady) "touch" else null,
+                                if (fwd.isKeyboardReady) "key" else null,
+                                if (fwd.isMouseReady) "mouse" else null,
+                                if (fwd.isSwitchesReady) "switches" else null,
+                            )
+                            addLog("✅ InputForwarder ready (channels: ${if (ready.isEmpty()) "none yet — relaunch crosvm with --input" else ready.joinToString()})")
 
                             // Start keyboard monitor for tablet/desktop mode
                             val ctx = appContext
@@ -241,11 +252,14 @@ class MainViewModel : ViewModel() {
                                 keyboardMonitor?.start()
                                 addLog("✅ KeyboardMonitor started")
                             }
+                        } else {
+                            addLog("⚠️ Input sockets unavailable — input forwarding disabled")
                         }
                     } else {
                         // Connection lost or failed
                         keyboardMonitor?.stop()
                         keyboardMonitor = null
+                        inputForwarder?.close()
                         inputForwarder = null
                         isConnected = false
                         surfaceSent = false
@@ -288,6 +302,7 @@ class MainViewModel : ViewModel() {
             keyboardMonitor = null
             displayProvider?.shutdown()
             displayProvider = null
+            inputForwarder?.close()
             inputForwarder = null
             withContext(Dispatchers.IO) { manager.disconnect() }
             isConnected = false; currentStep = 0; surfaceSent = false
@@ -402,6 +417,7 @@ class MainViewModel : ViewModel() {
         keyboardMonitor = null
         displayProvider?.shutdown()
         displayProvider = null
+        inputForwarder?.close()
         inputForwarder = null
         mainSurfaceView = null
         cursorSurfaceView = null

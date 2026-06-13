@@ -2,6 +2,7 @@ package com.kancy.display_test
 
 import android.content.Intent
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.topjohnwu.superuser.ipc.RootService as RootServiceBase
 
@@ -62,13 +63,33 @@ class RootDisplayService : RootServiceBase() {
         }
     }
 
+    private val inputSocketHost = InputSocketHost()
+
+    override fun onCreate() {
+        super.onCreate()
+        // Open the input listeners as early as possible: crosvm connects to them at ITS
+        // startup, so they must exist before crosvm launches. Binding this root service first
+        // (then launching crosvm with InputSocketHost.LAUNCH_ARGS) yields the right ordering.
+        inputSocketHost.ensureListening()
+    }
+
     override fun onBind(intent: Intent): IBinder {
         Log.i(TAG, "onBind: root service starting, uid=${android.os.Process.myUid()}, pid=${android.os.Process.myPid()}")
         return object : IRootDisplayService.Stub() {
             override fun waitForDisplayBinder(): IBinder? {
                 return doWaitForDisplayBinder()
             }
+
+            override fun getInputSockets(): Array<ParcelFileDescriptor?> {
+                Log.i(TAG, "getInputSockets: uid=${android.os.Process.myUid()}")
+                return inputSocketHost.getSockets()
+            }
         }
+    }
+
+    override fun onUnbind(intent: Intent): Boolean {
+        inputSocketHost.close()
+        return super.onUnbind(intent)
     }
 
     private fun doWaitForDisplayBinder(): IBinder? {

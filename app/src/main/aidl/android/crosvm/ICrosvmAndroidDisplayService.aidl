@@ -18,12 +18,16 @@ package android.crosvm;
 
 import android.crosvm.DisplayConfig;
 import android.os.ParcelFileDescriptor;
-import android.view.MotionEvent;
 import android.view.Surface;
 
 /**
- * Service to provide Crosvm with an Android Surface for showing a guest's
- * display, and forward input events to the guest.
+ * Service to provide Crosvm with an Android Surface for showing a guest's display.
+ *
+ * NOTE: This binder is implemented by crosvm itself (see
+ * libs/android_display_backend/crosvm_android_display_client.cpp). Only the methods below are
+ * implemented there. Input forwarding is NOT done through this interface — that C++ backend has
+ * no handle to crosvm's virtio-input devices. Input goes through per-device unix sockets that
+ * crosvm reads via `--input ...[path=...]`; see InputSocketHost / InputForwarder / EvdevEncoder.
  */
 interface ICrosvmAndroidDisplayService {
     // ── Display surface management ──────────────────────────────────────────
@@ -37,35 +41,9 @@ interface ICrosvmAndroidDisplayService {
     /**
      * Returns the guest display configuration.
      * @return DisplayConfig with width/height/dpi/refreshRate, or null if not available yet.
+     *
+     * NOTE: crosvm's current C++ backend does not implement this either; callers must handle
+     * the call failing and fall back to a default resolution.
      */
     DisplayConfig getDisplayConfig();
-
-    // ── Input forwarding ────────────────────────────────────────────────────
-    /**
-     * Sends a touch event to the guest.
-     * @param event The MotionEvent from Android view system
-     * @param scaleX Scale factor to convert Android X coordinate to guest X
-     * @param scaleY Scale factor to convert Android Y coordinate to guest Y
-     */
-    void sendTouchEvent(in MotionEvent event, float scaleX, float scaleY);
-
-    /**
-     * Sends a mouse event to the guest.
-     * @param event The MotionEvent
-     * @param isRelative True for relative (pointer capture) mode, false for absolute
-     */
-    void sendMouseEvent(in MotionEvent event, boolean isRelative);
-
-    /**
-     * Sends a key event to the guest.
-     * @param scanCode Linux evdev scan code
-     * @param pressed True for key down, false for key up
-     */
-    void sendKeyEvent(int scanCode, boolean pressed);
-
-    /**
-     * Sends tablet/desktop mode state to the guest.
-     * @param isTablet True for tablet mode, false for desktop mode
-     */
-    void sendTabletModeEvent(boolean isTablet);
 }

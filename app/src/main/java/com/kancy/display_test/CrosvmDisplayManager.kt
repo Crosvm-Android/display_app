@@ -140,6 +140,25 @@ class CrosvmDisplayManager {
     }
 
     /**
+     * Obtains the host-end input socket FDs from the root process. The root service binds
+     * unix sockets that crosvm connects to via `--input ...[path=...]`; this returns the
+     * accepted host ends. Channels crosvm hasn't connected yet are null. Returns null if the
+     * root service isn't bound or the call fails.
+     */
+    fun getInputSockets(): Array<ParcelFileDescriptor?>? {
+        val svc = rootServiceBinder ?: run {
+            Log.e(TAG, "getInputSockets: root service not bound")
+            return null
+        }
+        return try {
+            svc.getInputSockets()
+        } catch (e: Exception) {
+            Log.e(TAG, "getInputSockets failed", e)
+            null
+        }
+    }
+
+    /**
      * Step 1: Bind to RootDisplayService.
      * RootService.bind() MUST be called on the main thread.
      * This method posts the bind call to the main handler and blocks
