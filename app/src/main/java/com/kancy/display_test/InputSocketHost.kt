@@ -69,11 +69,13 @@ class InputSocketHost {
     private val serverFds = arrayOfNulls<FileDescriptor>(CHANNEL_COUNT)
     @Volatile private var peerFds = arrayOfNulls<FileDescriptor>(CHANNEL_COUNT)
     private var started = false
+    @Volatile private var closed = false
 
     /** Idempotently binds + listens on all channels and starts background accept threads. */
     @Synchronized
     fun ensureListening() {
         if (started) return
+        closed = false
         for (ch in 0 until CHANNEL_COUNT) {
             val path = PATHS[ch]
             try {
@@ -95,12 +97,22 @@ class InputSocketHost {
     private fun startAcceptThread(ch: Int) {
         val server = serverFds[ch] ?: return
         Thread({
-            try {
-                val peer = Os.accept(server, null /* peerAddress */)
+            // Accept in a loop, not once: crosvm may stop and restart while this app keeps running.
+            // Each new connection replaces the previous (now-dead) peer so getSockets() always
+            // hands back the live one. The loop ends only when close() shuts the listener down.
+            while (!closed) {
+                val peer = try {
+                    Os.accept(server, null /* peerAddress */)
+                } catch (e: Exception) {
+                    if (closed) break
+                    Log.e(TAG, "accept failed on channel $ch", e)
+                    try { Thread.sleep(200) } catch (_: InterruptedException) { break }
+                    continue
+                }
+                val old = peerFds[ch]
                 peerFds[ch] = peer
+                old?.let { runCatching { Os.close(it) } } // release the stale connection's fd
                 Log.i(TAG, "crosvm connected on channel $ch (${PATHS[ch]})")
-            } catch (e: Exception) {
-                Log.e(TAG, "accept failed on channel $ch", e)
             }
         }, "InputAccept-$ch").apply { isDaemon = true }.start()
     }
@@ -134,6 +146,7 @@ class InputSocketHost {
     /** Closes all peer + server fds and removes the socket files. */
     @Synchronized
     fun close() {
+        closed = true // stop accept loops; closing the server fd below unblocks Os.accept()
         for (ch in 0 until CHANNEL_COUNT) {
             peerFds[ch]?.let { runCatching { Os.close(it) } }
             serverFds[ch]?.let { runCatching { Os.close(it) } }
