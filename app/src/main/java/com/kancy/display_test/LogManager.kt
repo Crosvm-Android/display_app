@@ -6,15 +6,27 @@ import java.util.Locale
 
 /**
  * Log entry with timestamp, category, and message.
+ *
+ * The display string is formatted once at construction and cached in [formatted]. Formatting
+ * (especially the timestamp) is the dominant cost when logs flood, and the previous design
+ * re-ran it for the whole buffer on every new line — so it must happen exactly once per entry.
  */
 data class LogEntry(
+    val id: Long,
     val timestamp: Long,
     val category: LogCategory,
     val message: String
 ) {
-    fun format(): String {
-        val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(timestamp))
-        return "[$ts] [${category.tag}] $message"
+    val formatted: String = "[${tsFormat.get()!!.format(Date(timestamp))}] [${category.tag}] $message"
+
+    /** @deprecated use [formatted] — kept so older callers compile. */
+    fun format(): String = formatted
+
+    companion object {
+        // SimpleDateFormat is not thread-safe and is expensive to construct; share one per thread.
+        private val tsFormat = ThreadLocal.withInitial {
+            SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+        }
     }
 }
 
@@ -60,17 +72,23 @@ enum class LogCategory(val tag: String, val emoji: String) {
 class LogManager {
     private val logs = mutableListOf<LogEntry>()
     private val maxLogs = 500  // Keep last 500 entries
+    private var nextId = 0L    // Monotonic id for stable LazyColumn keys (guarded by `logs`).
 
-    fun addLog(message: String, category: LogCategory? = null) {
+    /** Appends a log entry and returns it (so callers can update the UI incrementally). */
+    fun addLog(message: String, category: LogCategory? = null): LogEntry {
         val cat = category ?: LogCategory.fromMessage(message)
-        val entry = LogEntry(System.currentTimeMillis(), cat, message)
-        synchronized(logs) {
+        return synchronized(logs) {
+            val entry = LogEntry(nextId++, System.currentTimeMillis(), cat, message)
             logs.add(entry)
             if (logs.size > maxLogs) {
                 logs.removeAt(0)
             }
+            entry
         }
     }
+
+    /** Max number of entries retained — display lists should mirror this bound. */
+    val capacity: Int get() = maxLogs
 
     fun getAllLogs(): List<LogEntry> = synchronized(logs) { logs.toList() }
 

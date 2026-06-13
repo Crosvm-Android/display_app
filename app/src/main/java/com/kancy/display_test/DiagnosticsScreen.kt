@@ -40,6 +40,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -207,8 +208,19 @@ private fun EnvRow(name: String, passed: Boolean, message: String, top: Boolean 
 private fun LogsTab(viewModel: MainViewModel) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    // Auto-scroll to the newest line, but only when the user is already at the bottom — so
+    // scrolling up to read history isn't yanked back. Instant scroll (not animated): animating
+    // every line during a log flood is what janks the UI.
+    val atBottom by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= viewModel.logMessages.lastIndex
+        }
+    }
     LaunchedEffect(viewModel.logMessages.size) {
-        if (viewModel.logMessages.isNotEmpty()) listState.animateScrollToItem(viewModel.logMessages.size - 1)
+        if (atBottom && viewModel.logMessages.isNotEmpty()) {
+            listState.scrollToItem(viewModel.logMessages.lastIndex)
+        }
     }
 
     val filters = listOf(
@@ -253,12 +265,12 @@ private fun LogsTab(viewModel: MainViewModel) {
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(viewModel.logMessages) { msg ->
+            items(viewModel.logMessages, key = { it.id }) { entry ->
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        msg,
+                        entry.formatted,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         lineHeight = 15.sp,

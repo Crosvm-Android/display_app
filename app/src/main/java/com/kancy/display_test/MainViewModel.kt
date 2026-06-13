@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import android.view.SurfaceView
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
@@ -11,9 +12,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainViewModel : ViewModel() {
 
@@ -39,8 +37,13 @@ class MainViewModel : ViewModel() {
     /** True once DisplayProvider has been created (service is connecting/connected). */
     var surfaceSent     by mutableStateOf(false)
         private set
-    var logMessages     by mutableStateOf(listOf<String>())
-        private set
+    /**
+     * Display log lines, observed by the Logs UI. A [SnapshotStateList] so new entries are
+     * appended incrementally — Compose recomposes only the added row instead of re-diffing a
+     * freshly allocated list. Rebuilt wholesale only on filter change / clear (see
+     * [updateLogDisplay]), never per log line.
+     */
+    val logMessages = mutableStateListOf<LogEntry>()
     var selectedLogCategory by mutableStateOf<LogCategory?>(null)
         private set
 
@@ -103,8 +106,6 @@ class MainViewModel : ViewModel() {
         private set
     private var keyboardMonitor: KeyboardMonitor? = null
 
-    private val dateFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
-
     fun clearLogs() {
         logManager.clearLogs()
         updateLogDisplay()
@@ -117,12 +118,12 @@ class MainViewModel : ViewModel() {
 
     fun exportLogs(): String = logManager.exportToString()
 
+    /** Full rebuild of the display list — only on filter change / clear, not per log line. */
     private fun updateLogDisplay() {
-        logMessages = if (selectedLogCategory == null) {
-            logManager.getAllLogs().map { it.format() }
-        } else {
-            logManager.getLogsByCategory(selectedLogCategory!!).map { it.format() }
-        }
+        val entries = selectedLogCategory?.let { logManager.getLogsByCategory(it) }
+            ?: logManager.getAllLogs()
+        logMessages.clear()
+        logMessages.addAll(entries)
     }
 
     fun toggleFullscreen() {
@@ -130,11 +131,15 @@ class MainViewModel : ViewModel() {
     }
 
     private fun addLog(message: String) {
-        val ts = dateFmt.format(Date())
-        val formattedMsg = "[$ts] $message"
-        logManager.addLog(message)
-        updateLogDisplay()
+        val entry = logManager.addLog(message)
         Log.d(TAG, message)
+        // Incremental UI update: append only the new line (O(1)) instead of reformatting the
+        // whole buffer. Honor the active filter, and mirror LogManager's capacity bound so the
+        // display list drops its oldest line in lockstep with the backing buffer.
+        if (selectedLogCategory == null || entry.category == selectedLogCategory) {
+            logMessages.add(entry)
+            while (logMessages.size > logManager.capacity) logMessages.removeAt(0)
+        }
     }
 
     // ── Init root ───────────────────────────────────────────────────────────────
