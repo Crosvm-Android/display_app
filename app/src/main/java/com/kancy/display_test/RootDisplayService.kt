@@ -2,7 +2,6 @@ package com.kancy.display_test
 
 import android.content.Intent
 import android.os.IBinder
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.topjohnwu.superuser.ipc.RootService as RootServiceBase
 
@@ -80,9 +79,12 @@ class RootDisplayService : RootServiceBase() {
                 return doWaitForDisplayBinder()
             }
 
-            override fun getInputSockets(): Array<ParcelFileDescriptor?> {
-                Log.i(TAG, "getInputSockets: uid=${android.os.Process.myUid()}")
-                return inputSocketHost.getSockets()
+            override fun getInputChannelsReady(): BooleanArray {
+                return inputSocketHost.readyChannels()
+            }
+
+            override fun writeInput(channel: Int, data: ByteArray): Boolean {
+                return inputSocketHost.write(channel, data)
             }
         }
     }

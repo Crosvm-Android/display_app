@@ -2,7 +2,6 @@ package com.kancy.display_test
 
 import android.app.Application
 import android.content.Context
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.view.SurfaceView
 import androidx.compose.runtime.getValue
@@ -278,22 +277,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val gpu = withContext(Dispatchers.IO) { manager.readGpuBackend(serviceName) }
                         gpuBackend = gpu
                         addLog(if (gpu != null) "🖼️ GPU backend: $gpu (from launch args)" else "ℹ️ GPU backend: unknown (no --gpu in args)")
-                        // Create InputForwarder from the host-side input sockets the root
-                        // service holds. crosvm connects to those sockets at ITS startup, so a
-                        // channel may not be ready yet (getInputSockets() waits briefly). Events
-                        // for unconnected channels are dropped until crosvm (re)connects.
-                        val sockets = fetchInputSockets()
-                        if (sockets != null) {
+                        // Build the InputForwarder. The root process owns the input sockets and
+                        // does the writes; the app only ships encoded bytes (so untrusted_app
+                        // never touches the socket — keeps SELinux enforcing). crosvm connects its
+                        // sockets at startup, so a channel may not be ready yet; writes still go
+                        // through once crosvm connects (the root side consults the live socket).
+                        val ready = withContext(Dispatchers.IO) { manager.getInputChannelsReady() }
+                        if (ready != null) {
                             inputForwarder?.close()
-                            val fwd = InputForwarder(sockets) { msg -> addLog(msg) }
+                            val sink = InputForwarder.InputSink { ch, data -> manager.writeInput(ch, data) }
+                            val fwd = InputForwarder(ready, sink) { msg -> addLog(msg) }
                             inputForwarder = fwd
-                            val ready = listOfNotNull(
+                            val readyNames = listOfNotNull(
                                 if (fwd.isTouchReady) "touch" else null,
                                 if (fwd.isKeyboardReady) "key" else null,
                                 if (fwd.isMouseReady) "mouse" else null,
                                 if (fwd.isSwitchesReady) "switches" else null,
                             )
-                            addLog("✅ InputForwarder ready (channels: ${if (ready.isEmpty()) "none yet — relaunch crosvm with --input" else ready.joinToString()})")
+                            addLog("✅ InputForwarder ready (channels: ${if (readyNames.isEmpty()) "none yet — will connect when crosvm starts" else readyNames.joinToString()})")
 
                             // Start keyboard monitor for tablet/desktop mode (only if enabled).
                             val ctx = appContext
@@ -441,31 +442,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 addLog("⚠️ Environment check found issues")
             }
         }
-    }
-
-    /**
-     * Fetches the host-end input sockets, retrying briefly. crosvm connects its input sockets
-     * around the same time it registers the display service, but a channel can land slightly
-     * later than the display binder we connected on — without a retry that channel would be
-     * dropped for the whole session. Returns as soon as all channels are present, or the most
-     * complete set seen after a few attempts. Superseded (less complete) sets are closed so the
-     * dup'd fds don't leak; the returned set is owned by the caller (the InputForwarder).
-     */
-    private suspend fun fetchInputSockets(attempts: Int = 3): Array<ParcelFileDescriptor?>? {
-        var best: Array<ParcelFileDescriptor?>? = null
-        repeat(attempts) {
-            val s = withContext(Dispatchers.IO) { manager.getInputSockets() } ?: return best
-            val readyCount = s.count { it != null }
-            val bestCount = best?.count { it != null } ?: -1
-            if (readyCount > bestCount) {
-                best?.forEach { runCatching { it?.close() } }
-                best = s
-            } else {
-                s.forEach { runCatching { it?.close() } }
-            }
-            if (best?.all { it != null } == true) return best
-        }
-        return best
     }
 
     /** Dumps recent SELinux denials to the log so targeted allow rules can be written. */

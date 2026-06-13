@@ -1,6 +1,5 @@
 package com.kancy.display_test
 
-import android.os.ParcelFileDescriptor
 import android.system.Os
 import android.system.OsConstants
 import android.util.Log
@@ -68,6 +67,7 @@ class InputSocketHost {
 
     private val serverFds = arrayOfNulls<FileDescriptor>(CHANNEL_COUNT)
     @Volatile private var peerFds = arrayOfNulls<FileDescriptor>(CHANNEL_COUNT)
+    private val writeLocks = Array(CHANNEL_COUNT) { Any() }
     private var started = false
     @Volatile private var closed = false
 
@@ -118,10 +118,10 @@ class InputSocketHost {
     }
 
     /**
-     * Returns dup'd host-end FDs as [ParcelFileDescriptor]s, indexed by channel. Elements are
-     * null for channels crosvm has not connected to yet. Waits briefly for connections.
+     * Per-channel connection status. Waits briefly so a channel crosvm connects just after the
+     * display binder still reports ready. Index by channel constants.
      */
-    fun getSockets(): Array<ParcelFileDescriptor?> {
+    fun readyChannels(): BooleanArray {
         ensureListening()
         val deadline = System.currentTimeMillis() + ACCEPT_WAIT_MS
         while (System.currentTimeMillis() < deadline && peerFds.any { it == null }) {
@@ -131,15 +131,31 @@ class InputSocketHost {
                 break
             }
         }
-        return Array(CHANNEL_COUNT) { ch ->
-            peerFds[ch]?.let { fd ->
-                try {
-                    ParcelFileDescriptor.dup(fd) // app gets its own fd to the same socket
-                } catch (e: Exception) {
-                    Log.e(TAG, "dup failed on channel $ch", e)
-                    null
+        return BooleanArray(CHANNEL_COUNT) { ch -> peerFds[ch] != null }
+    }
+
+    /**
+     * Writes pre-encoded evdev bytes to a channel's socket, here in the root process (permissive
+     * domain) so the app never touches the socket. Returns false if the channel isn't connected
+     * or the write fails. Serialized per channel; consults the live peer fd each call so a crosvm
+     * reconnect is picked up automatically.
+     */
+    fun write(channel: Int, data: ByteArray): Boolean {
+        if (channel !in 0 until CHANNEL_COUNT || data.isEmpty()) return false
+        return try {
+            synchronized(writeLocks[channel]) {
+                val fd = peerFds[channel] ?: return false
+                var off = 0
+                while (off < data.size) {
+                    val n = Os.write(fd, data, off, data.size - off)
+                    if (n <= 0) break
+                    off += n
                 }
             }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "write ch=$channel failed: ${e.message}")
+            false
         }
     }
 

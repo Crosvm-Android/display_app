@@ -229,22 +229,32 @@ class CrosvmDisplayManager {
         }
     }
 
-    /**
-     * Obtains the host-end input socket FDs from the root process. The root service binds
-     * unix sockets that crosvm connects to via `--input ...[path=...]`; this returns the
-     * accepted host ends. Channels crosvm hasn't connected yet are null. Returns null if the
-     * root service isn't bound or the call fails.
-     */
-    fun getInputSockets(): Array<ParcelFileDescriptor?>? {
+    /** Per-channel input connection status from the root process; null if not bound / failed. */
+    fun getInputChannelsReady(): BooleanArray? {
         val svc = rootServiceBinder ?: run {
-            Log.e(TAG, "getInputSockets: root service not bound")
+            Log.e(TAG, "getInputChannelsReady: root service not bound")
             return null
         }
         return try {
-            svc.getInputSockets()
+            svc.getInputChannelsReady()
         } catch (e: Exception) {
-            Log.e(TAG, "getInputSockets failed", e)
+            Log.e(TAG, "getInputChannelsReady failed", e)
             null
+        }
+    }
+
+    /**
+     * Ships pre-encoded evdev bytes to the root process, which writes them to the input channel's
+     * socket (root runs in a permissive domain → no untrusted_app→socket SELinux crossing).
+     * Returns false if not bound, the channel isn't connected, or the write failed.
+     */
+    fun writeInput(channel: Int, data: ByteArray): Boolean {
+        val svc = rootServiceBinder ?: return false
+        return try {
+            svc.writeInput(channel, data)
+        } catch (e: Exception) {
+            Log.e(TAG, "writeInput(ch=$channel) failed", e)
+            false
         }
     }
 

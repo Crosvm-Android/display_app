@@ -1,51 +1,50 @@
 package com.kancy.display_test
 
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.view.MotionEvent
-import java.io.OutputStream
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 /**
  * Centralized input forwarding to the guest VM.
  *
- * Events are encoded with [EvdevEncoder] and written to the per-device unix sockets that
- * crosvm reads from (`--input multi-touch/keyboard/mouse/switches[path=...]`). The host ends
- * of those sockets are obtained from [IRootDisplayService.getInputSockets] (see
- * [InputSocketHost]). This path requires NO changes to crosvm and does NOT go through
- * ICrosvmAndroidDisplayService (that binder lives inside crosvm and cannot inject input).
+ * Events are encoded with [EvdevEncoder] into a byte buffer and shipped to the root process via
+ * [InputSink] (backed by [IRootDisplayService.writeInput]); the root process owns the per-device
+ * unix sockets crosvm reads from (`--input multi-touch/keyboard/mouse/switches[path=...]`) and
+ * does the actual socket write. Writing in the root (permissive su/magisk) domain avoids an
+ * untrusted_app -> unix_stream_socket SELinux crossing, so SELinux can stay enforcing.
  *
- * Writes are serialized on a single background thread so the UI thread never blocks on a
- * socket, mirroring VirtualMachine.java's input executor. MotionEvents are copied before
- * being handed to the worker because the framework recycles the originals.
+ * Each high-level event is encoded once and sent in a single writeInput() call (one binder hop
+ * per MotionEvent/key, not per evdev record). Work is serialized on a single background thread so
+ * the UI thread never blocks; MotionEvents are copied first because the framework recycles the
+ * originals.
  *
- * @param sockets 4-element array indexed by [InputSocketHost] channel constants; null
- *   elements mean crosvm has not connected that channel yet (those events are dropped).
+ * @param ready per-channel connection snapshot at construction (for logging only — writes always
+ *   attempt and the root side reports failure if a channel isn't connected yet).
+ * @param sink ships encoded bytes to the root writer.
  */
 class InputForwarder(
-    sockets: Array<ParcelFileDescriptor?>,
+    private val ready: BooleanArray,
+    private val sink: InputSink,
     private val logger: (String) -> Unit = {}
 ) {
+    /** Writes pre-encoded evdev bytes for a channel in the root process; false if not delivered. */
+    fun interface InputSink {
+        fun write(channel: Int, data: ByteArray): Boolean
+    }
+
     companion object {
         private const val TAG = "InputForwarder"
     }
-
-    private fun openStream(pfd: ParcelFileDescriptor): OutputStream =
-        ParcelFileDescriptor.AutoCloseOutputStream(pfd)
-
-    private val touchOut = sockets.getOrNull(InputSocketHost.MULTITOUCH)?.let(::openStream)
-    private val keyOut = sockets.getOrNull(InputSocketHost.KEYBOARD)?.let(::openStream)
-    private val mouseOut = sockets.getOrNull(InputSocketHost.MOUSE)?.let(::openStream)
-    private val switchesOut = sockets.getOrNull(InputSocketHost.SWITCHES)?.let(::openStream)
 
     private val worker = Executors.newSingleThreadExecutor { r ->
         Thread(r, "InputForwarder").apply { isDaemon = true }
     }
 
-    val isTouchReady get() = touchOut != null
-    val isKeyboardReady get() = keyOut != null
-    val isMouseReady get() = mouseOut != null
-    val isSwitchesReady get() = switchesOut != null
+    val isTouchReady get() = ready.getOrElse(InputSocketHost.MULTITOUCH) { false }
+    val isKeyboardReady get() = ready.getOrElse(InputSocketHost.KEYBOARD) { false }
+    val isMouseReady get() = ready.getOrElse(InputSocketHost.MOUSE) { false }
+    val isSwitchesReady get() = ready.getOrElse(InputSocketHost.SWITCHES) { false }
 
     private inline fun submit(name: String, crossinline block: () -> Unit) {
         try {
@@ -70,14 +69,15 @@ class InputForwarder(
      * @param scaleY guestHeight / viewHeight
      */
     fun sendTouchEvent(event: MotionEvent, scaleX: Float, scaleY: Float) {
-        val out = touchOut ?: return
         val copy = MotionEvent.obtainNoHistory(event)
         submit("sendTouchEvent") {
+            val buf = ByteArrayOutputStream(256)
             try {
-                EvdevEncoder.sendMultiTouch(out, copy, scaleX, scaleY)
+                EvdevEncoder.sendMultiTouch(buf, copy, scaleX, scaleY)
             } finally {
                 copy.recycle()
             }
+            sink.write(InputSocketHost.MULTITOUCH, buf.toByteArray())
         }
     }
 
@@ -90,14 +90,15 @@ class InputForwarder(
      *   sent here regardless.
      */
     fun sendMouseEvent(event: MotionEvent, isRelative: Boolean) {
-        val out = mouseOut ?: return
         val copy = MotionEvent.obtainNoHistory(event)
         submit("sendMouseEvent") {
+            val buf = ByteArrayOutputStream(64)
             try {
-                EvdevEncoder.sendMouse(out, copy)
+                EvdevEncoder.sendMouse(buf, copy)
             } finally {
                 copy.recycle()
             }
+            sink.write(InputSocketHost.MOUSE, buf.toByteArray())
         }
     }
 
@@ -108,8 +109,6 @@ class InputForwarder(
      * @return true if the key code is mapped, false otherwise.
      */
     fun sendKeyEvent(keyCode: Int, pressed: Boolean): Boolean {
-        if (keyOut == null) return false
-
         val synthesis = KeyCodeMapper.needsShiftSynthesis(keyCode)
         if (synthesis != null) {
             val (baseKey, _) = synthesis
@@ -131,25 +130,27 @@ class InputForwarder(
 
     /** Sends a raw Linux evdev KEY_* scan code. */
     fun sendRawKeyEvent(scanCode: Int, pressed: Boolean) {
-        val out = keyOut ?: return
         submit("sendRawKeyEvent") {
-            EvdevEncoder.sendKey(out, scanCode.toShort(), pressed)
+            val buf = ByteArrayOutputStream(24)
+            EvdevEncoder.sendKey(buf, scanCode.toShort(), pressed)
+            sink.write(InputSocketHost.KEYBOARD, buf.toByteArray())
         }
     }
 
     // ── Tablet/Desktop mode ────────────────────────────────────────────────
 
     fun sendTabletModeEvent(isTablet: Boolean) {
-        val out = switchesOut ?: return
         submit("sendTabletModeEvent") {
-            EvdevEncoder.sendTabletMode(out, isTablet)
-            logger("📱 Tablet mode: $isTablet")
+            val buf = ByteArrayOutputStream(24)
+            EvdevEncoder.sendTabletMode(buf, isTablet)
+            if (sink.write(InputSocketHost.SWITCHES, buf.toByteArray())) {
+                logger("📱 Tablet mode: $isTablet")
+            }
         }
     }
 
-    /** Closes the worker and all sockets. */
+    /** Shuts down the worker. The sockets are owned by the root process, not closed here. */
     fun close() {
         worker.shutdownNow()
-        listOf(touchOut, keyOut, mouseOut, switchesOut).forEach { runCatching { it?.close() } }
     }
 }
