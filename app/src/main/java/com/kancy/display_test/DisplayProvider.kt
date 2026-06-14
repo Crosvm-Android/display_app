@@ -198,8 +198,8 @@ internal class DisplayProvider(
             logger("⚠️ $label surface not valid — skipping")
             return false
         }
-        return try {
-            svc.setSurface(surface, forCursor)
+        // Marks the surface as successfully delivered to crosvm and wires up follow-ups.
+        fun markSent(): Boolean {
             if (!forCursor) {
                 mainNeedsSend = false
                 mainSurfaceSent = true
@@ -208,17 +208,25 @@ internal class DisplayProvider(
             }
             logger("✅ $label surface sent")
             if (forCursor) setupCursorStream(svc)
-            true
+            return true
+        }
+        return try {
+            svc.setSurface(surface, forCursor)
+            markSent()
+        } catch (e: IllegalArgumentException) {
+            // KNOWN, BENIGN: the reference TerminalApp DisplayProvider documents that setSurface
+            // consistently throws IllegalArgumentException from the binder reply path even though
+            // crosvm DID receive and configure the surface (native setSurface() always returns ok;
+            // the throw comes from the client-side transact/reply, not server rejection). The
+            // reference catches and ignores it and the VM display works. So we mirror that: treat it
+            // as delivered, keep the SurfaceView VISIBLE (hiding it would trigger surfaceDestroyed →
+            // removeSurface and tear the display down — the real cause of the black screen).
+            Log.w(TAG, "setSurface($label): IllegalArgumentException (known/benign) — treating as delivered", e)
+            logger("ℹ️ $label surface: IllegalArgumentException (known/benign) — surface delivered")
+            markSent()
         } catch (e: Exception) {
             Log.e(TAG, "setSurface($label) failed", e)
             logger("⚠️ setSurface($label) failed: ${e.javaClass.simpleName}: ${e.message}")
-            // Hide the SurfaceView to prevent surfaceflinger from compositing an
-            // uninitialised buffer, which can crash RenderEngine and reboot the device.
-            val view = if (forCursor) cursorView else mainView
-            view.visibility = android.view.View.INVISIBLE
-            if (!forCursor) {
-                cursorView.visibility = android.view.View.INVISIBLE
-            }
             false
         }
     }
