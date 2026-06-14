@@ -62,6 +62,12 @@ internal class DisplayProvider(
     private var cursorNeedsSend = false
     private var mainSurfaceSent = false   // true while crosvm holds our main surface
 
+    // Set once we've captured a frame via saveFrameForSurface (done on surfaceDestroyed, e.g. a
+    // fullscreen toggle which reparents the SurfaceView and recreates its surface). Gates the
+    // drawSavedFrameForSurface restore so we never paint a blank saved buffer on the very first
+    // surface (initial connect, before anything was ever saved).
+    private var hasSavedFrame = false
+
     private var cursorHandlerThread: CursorHandlerThread? = null
 
     private val deathRecipient = IBinder.DeathRecipient {
@@ -207,7 +213,22 @@ internal class DisplayProvider(
                 cursorNeedsSend = false
             }
             logger("✅ $label surface sent")
-            if (forCursor) setupCursorStream(svc)
+            if (forCursor) {
+                setupCursorStream(svc)
+            } else if (hasSavedFrame) {
+                // The main surface was just (re)created — e.g. a fullscreen toggle reparented the
+                // SurfaceView and Android destroyed/recreated its surface, leaving it blank. Paint
+                // the frame we captured in surfaceDestroyed so the last image reappears immediately,
+                // instead of waiting for the guest to produce a new frame. This matters under a
+                // damage-driven compositor like weston, which won't repaint a static desktop until
+                // input/clock activity — so the new surface would otherwise stay black for a while.
+                try {
+                    svc.drawSavedFrameForSurface(false)
+                    logger("🖼️ Restored last frame onto recreated main surface")
+                } catch (e: Exception) {
+                    Log.w(TAG, "drawSavedFrameForSurface failed", e)
+                }
+            }
             return true
         }
         return try {
@@ -314,6 +335,18 @@ internal class DisplayProvider(
             }
 
             val svc = displayService ?: return
+            // Capture the last frame before the surface goes away (e.g. a fullscreen toggle
+            // reparents the SurfaceView). It's restored onto the next surface in trySendSurface so
+            // the image doesn't disappear into black under a lazy-redraw compositor (weston). Must
+            // run before removeSurface, while crosvm still holds this surface's last buffer.
+            if (surfaceKind == SurfaceKind.MAIN) {
+                try {
+                    svc.saveFrameForSurface(false)
+                    hasSavedFrame = true
+                } catch (e: Exception) {
+                    Log.w(TAG, "saveFrameForSurface failed", e)
+                }
+            }
             try {
                 svc.removeSurface(isForCursor())
             } catch (e: DeadObjectException) {
